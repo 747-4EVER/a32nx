@@ -26,7 +26,7 @@ export class EfisSymbols {
 
     private nearby: NearbyFacilities;
 
-    private listener = RegisterViewListener('JS_LISTENER_SIMVARS');
+    private listener = RegisterViewListener('JS_LISTENER_SIMVARS', null, true);
 
     private static sides = ['L', 'R'];
 

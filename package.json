@@ -10,6 +10,7 @@
     "serve:efb": "cd src/instruments/src/EFB/ && rollup -wc ./rollup.development.config.js",
     "watch:instruments": "rollup -wc src/instruments/buildSrc/simulatorBuild.mjs",
     "build:atsu": "rollup -c src/atsu/rollup.config.js",
+    "build:sentry-client": "rollup -c src/sentry-client/rollup.config.js",
     "build:fbw": "cd src/fbw && ./build.sh",
     "build:fadec": "cd src/fadec && ./build.sh",
     "build:failures": "rollup -c src/failures/rollup.config.js",
@@ -44,6 +45,7 @@
     "@rollup/plugin-replace": "^2.3.3",
     "@rollup/plugin-typescript": "~8.0.0",
     "@rollup/plugin-json": "^4.1.0",
+    "@sentry/types": "^6.17.7",
     "@types/jest": "^27.0.2",
     "@types/react": "~17.0.11",
     "@types/react-dom": "~17.0.8",
@@ -84,6 +86,9 @@
     "webpack-dev-server": "^3.11.1"
   },
   "dependencies": {
+    "@sentry/browser": "^6.17.7",
+    "@sentry/tracing": "^6.17.7",
+    "@sentry/integrations": "^6.17.7",
     "msfs-geo": "^0.1.0-alpha3",
     "@flybywiresim/api-client": "^0.16.2",
     "@flybywiresim/react-components": "^0.3.1",
