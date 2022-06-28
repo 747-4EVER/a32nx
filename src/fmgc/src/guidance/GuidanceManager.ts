@@ -95,11 +95,13 @@ export class GuidanceManager {
                 return new RFLeg(from, to, to.additionalData.center, metadata, segment);
             }
 
-            if (to.additionalData.legType === LegType.CA) {
+            // FIXME VALeg should be implemented to give proper heading guidance
+            if (to.additionalData.legType === LegType.CA || to.additionalData.legType === LegType.VA) {
                 const course = to.additionalData.vectorsCourse;
                 const altitude = to.additionalData.vectorsAltitude;
+                const extraLength = (from.additionalData.runwayLength ?? 0) / (2 * 1852);
 
-                return new CALeg(course, altitude, metadata, segment);
+                return new CALeg(course, altitude, metadata, segment, extraLength);
             }
 
             if (to.additionalData.legType === LegType.CI || to.additionalData.legType === LegType.VI) {
@@ -177,12 +179,13 @@ export class GuidanceManager {
                 // Sync discontinuity info (FIXME until we have proper discontinuities)
 
                 if (oldLeg instanceof XFLeg && newLeg instanceof XFLeg) {
-                    oldLeg.fix.endsInDiscontinuity = newLeg.fix.endsInDiscontinuity;
-                    oldLeg.fix.discontinuityCanBeCleared = newLeg.fix.discontinuityCanBeCleared;
+                    oldLeg.fix = newLeg.fix;
                 }
 
-                if (oldLeg instanceof XFLeg && newLeg instanceof XFLeg) {
-                    oldLeg.fix = newLeg.fix;
+                // Sync metadata
+
+                if (oldLeg && newLeg) {
+                    oldLeg.metadata = { ...oldLeg.metadata, ...newLeg.metadata };
                 }
 
                 const prevLeg = geometry.legs.get(i - 1);
@@ -291,6 +294,6 @@ export class GuidanceManager {
             }
         }
 
-        return new Geometry(transitions, legs);
+        return new Geometry(transitions, legs, temp);
     }
 }

@@ -13,7 +13,7 @@ import { LegMetadata } from '@fmgc/guidance/lnav/legs/index';
 export abstract class Leg extends Guidable {
     segment: SegmentType;
 
-    abstract readonly metadata: Readonly<LegMetadata>
+    abstract metadata: Readonly<LegMetadata>
 
     constrainedTurnDirection: TurnDirection
 
@@ -25,19 +25,35 @@ export abstract class Leg extends Guidable {
 
     abstract get ident(): string
 
-    displayedOnMap: boolean = true
+    isNull = false
+
+    displayedOnMap = true
+
+    predictedTas: Knots
+
+    predictedGs: Knots
 
     get disableAutomaticSequencing(): boolean {
         return false;
     }
 
     /** @inheritDoc */
-    recomputeWithParameters(_isActive: boolean, _tas: Knots, _gs: Knots, _ppos: Coordinates, _trueTrack: DegreesTrue, _previousGuidable: Guidable, _nextGuidable: Guidable): void {
+    recomputeWithParameters(
+        _isActive: boolean,
+        _tas: Knots,
+        _gs: Knots,
+        _ppos: Coordinates,
+        _trueTrack: DegreesTrue,
+    ): void {
         // Default impl.
     }
 
     get distance(): NauticalMiles {
-        return distanceTo(this.getPathStartPoint(), this.getPathEndPoint());
+        try {
+            return distanceTo(this.getPathStartPoint(), this.getPathEndPoint());
+        } catch {
+            return 0;
+        }
     }
 
     abstract get distanceToTermination(): NauticalMiles

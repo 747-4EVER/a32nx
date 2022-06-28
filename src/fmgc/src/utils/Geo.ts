@@ -7,8 +7,15 @@ import { computeDestinationPoint as geolibDestPoint } from 'geolib';
 import { Coordinates } from '@fmgc/flightplanning/data/geo';
 import { MathUtils } from '@shared/MathUtils';
 import { Leg } from '@fmgc/guidance/lnav/legs/Leg';
-import { bearingTo, distanceTo, placeBearingDistance, smallCircleGreatCircleIntersection } from 'msfs-geo';
+import {
+    bearingTo,
+    distanceTo,
+    placeBearingDistance,
+    smallCircleGreatCircleIntersection,
+    placeBearingIntersection,
+} from 'msfs-geo';
 import { AFLeg } from '@fmgc/guidance/lnav/legs/AF';
+import { TFLeg } from '@fmgc/guidance/lnav/legs/TF';
 
 const sin = (input: Degrees) => Math.sin(input * (Math.PI / 180));
 
@@ -25,7 +32,7 @@ export class Geo {
     }
 
     static distanceToLeg(from: Coordinates, leg: Leg): NauticalMiles {
-        const intersections1 = A32NX_Util.bothGreatCircleIntersections(
+        const intersections1 = placeBearingIntersection(
             from,
             Avionics.Utils.clampAngle(leg.outboundCourse - 90),
             leg.getPathEndPoint(),
@@ -35,17 +42,25 @@ export class Geo {
         const d1 = Avionics.Utils.computeGreatCircleDistance(from, intersections1[0]);
         const d2 = Avionics.Utils.computeGreatCircleDistance(from, intersections1[1]);
 
+        let legStartReference;
+
+        if (leg instanceof TFLeg) {
+            legStartReference = leg.from.infos.coordinates;
+        } else {
+            legStartReference = leg.getPathStartPoint();
+        }
+
         // We might call this on legs that do not have a defined start point yet, as it depends on their inbound transition, which is what is passing
         // them in to this function.
         // In that case, do not consider the second intersection set.
-        if (!leg.getPathStartPoint()) {
+        if (!legStartReference) {
             return Math.min(d1, d2);
         }
 
-        const intersections2 = A32NX_Util.bothGreatCircleIntersections(
+        const intersections2 = placeBearingIntersection(
             from,
             Avionics.Utils.clampAngle(leg.outboundCourse - 90),
-            leg.getPathStartPoint(),
+            legStartReference,
             Avionics.Utils.clampAngle(leg.outboundCourse - 180),
         );
 
@@ -74,7 +89,7 @@ export class Geo {
             throw new Error('[FMS/LNAV] Cannot compute leg intercept if leg end point or outbound course are undefined');
         }
 
-        const intersections1 = A32NX_Util.bothGreatCircleIntersections(
+        const intersections1 = placeBearingIntersection(
             from,
             Avionics.Utils.clampAngle(bearing),
             'fix' in leg ? leg.fix.infos.coordinates : leg.getPathEndPoint(),
@@ -91,7 +106,7 @@ export class Geo {
             return d1 > d2 ? intersections1[1] : intersections1[0];
         }
 
-        const intersections2 = A32NX_Util.bothGreatCircleIntersections(
+        const intersections2 = placeBearingIntersection(
             from,
             Avionics.Utils.clampAngle(bearing),
             leg.getPathStartPoint(),

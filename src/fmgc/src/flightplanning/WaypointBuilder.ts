@@ -102,13 +102,16 @@ export class WaypointBuilder {
 
     public static fromWaypointManualHold(
         waypoint: WayPoint,
-        holdDirection: TurnDirection.Left | TurnDirection.Right,
+        holdDirection: TurnDirection,
         inboundCourse: Degrees,
         holdLength: NauticalMiles | undefined,
         holdTime: Minutes | undefined,
         instrument: BaseInstrument,
     ): WayPoint {
         const newWaypoint = WaypointBuilder.fromCoordinates(waypoint.ident, waypoint.infos.coordinates, instrument);
+
+        newWaypoint.icao = waypoint.icao;
+        newWaypoint.infos = waypoint.infos;
 
         newWaypoint.additionalData.legType = LegType.HM;
         newWaypoint.turnDirection = holdDirection;
@@ -120,6 +123,7 @@ export class WaypointBuilder {
         newWaypoint.legAltitudeDescription = waypoint.legAltitudeDescription;
         newWaypoint.legAltitude1 = waypoint.legAltitude1;
         newWaypoint.legAltitude2 = waypoint.legAltitude2;
+        newWaypoint.additionalData.constraintType = waypoint.additionalData.constraintType;
 
         return newWaypoint;
     }

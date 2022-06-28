@@ -1,5 +1,7 @@
-//  Copyright (c) 2021 FlyByWire Simulations
-//  SPDX-License-Identifier: GPL-3.0
+// Copyright (c) 2021-2022 FlyByWire Simulations
+// Copyright (c) 2021-2022 Synaptic Simulations
+//
+// SPDX-License-Identifier: GPL-3.0
 
 export enum VnavDescentMode {
     NORMAL,
@@ -8,21 +10,6 @@ export enum VnavDescentMode {
 }
 
 export const VnavConfig = {
-
-    /**
-     * Whether to calculate climb profile
-     */
-    VNAV_CALCULATE_CLIMB_PROFILE: false,
-
-    /**
-     * Whether to emit ToD pseudo waypoint
-     */
-    VNAV_EMIT_TOD: false,
-
-    /**
-     * Whether to emit (DECEL) pseudo waypoint
-     */
-    VNAV_EMIT_DECEL: true,
 
     /**
      * VNAV descent calculation mode (NORMAL, CDA or DPO)
@@ -34,4 +21,12 @@ export const VnavConfig = {
      */
     VNAV_EMIT_CDA_FLAP_PWP: true,
 
+    DEBUG_PROFILE: false,
+
+    VNAV_USE_LATCHED_DESCENT_MODE: false,
+
+    /**
+     * Percent N1 to add to the predicted idle N1. The real aircraft does also use a margin for this, but I don't know how much
+     */
+    IDLE_N1_MARGIN: 3,
 };

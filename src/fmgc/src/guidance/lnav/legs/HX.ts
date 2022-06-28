@@ -10,11 +10,9 @@ import { Geometry } from '@fmgc/guidance/Geometry';
 import { AltitudeDescriptor, TurnDirection } from '@fmgc/types/fstypes/FSEnums';
 import { SegmentType } from '@fmgc/wtsdk';
 import { arcDistanceToGo, arcGuidance, courseToFixDistanceToGo, courseToFixGuidance, maxBank } from '@fmgc/guidance/lnav/CommonGeometry';
-import { Guidable } from '@fmgc/guidance/Guidable';
 import { XFLeg } from '@fmgc/guidance/lnav/legs/XF';
-import { LnavConfig } from '@fmgc/guidance/LnavConfig';
-import { MathUtils } from '@shared/MathUtils';
 import { LegMetadata } from '@fmgc/guidance/lnav/legs/index';
+import { EntryState, HoldEntryTransition } from '@fmgc/guidance/lnav/transitions/HoldEntryTransition';
 import { PathVector, PathVectorType } from '../PathVector';
 
 interface HxGeometry {
@@ -24,6 +22,8 @@ interface HxGeometry {
     arcCentreFix1: LatLongAlt,
     arcCentreFix2: LatLongAlt,
     sweepAngle: Degrees,
+    legLength: NauticalMiles,
+    radius: NauticalMiles,
 }
 
 export enum HxLegGuidanceState {
@@ -33,43 +33,57 @@ export enum HxLegGuidanceState {
     Arc2,
 }
 
-export class HMLeg extends XFLeg {
+// TODO make sure IMM EXIT works during teardrop/parallel (proceed to HF via that entry then sequence the HM immediately)
+// TODO move HMLeg specific logic to HMLeg
+abstract class HXLeg extends XFLeg {
     // TODO consider different entries for initial state...
     // TODO make protected when done with DebugHXLeg
     public state: HxLegGuidanceState = HxLegGuidanceState.Inbound;
 
     protected initialState: HxLegGuidanceState = HxLegGuidanceState.Inbound;
 
-    protected transitionEndPoint: Coordinates;
-
     protected termConditionMet: boolean = false;
 
     /**
-     * TAS used for the current prediction
+     * Predicted tas for next prediction update
+     * Not including wind
      */
-    public predictedSpeed: Knots;
+    protected nextPredictedTas: Knots = 180;
 
-    protected geometry: HxGeometry;
+    /**
+     * Nominal TAS used for the current prediction
+     * Not including wind
+     */
+    protected predictedTas: Knots = 180;
 
-    private immExitLength: NauticalMiles;
+    /**
+     * Nominal ground speed used the current prediction
+     * including wind
+     */
+    protected predictedGs: Knots = 180;
 
-    private immExitRequested = false;
+    /**
+     * Wind velocity along the inbound leg
+     */
+    protected inboundWindSpeed: Knots;
+
+    /**
+     * Current predicted hippodrome geometry
+     */
+    public geometry: HxGeometry;
 
     constructor(
-        public to: WayPoint,
+        fix: WayPoint,
         public metadata: LegMetadata,
         public segment: SegmentType,
     ) {
-        super(to);
-
-        this.predictedSpeed = this.targetSpeed();
+        super(fix);
 
         this.geometry = this.computeGeometry();
     }
 
     get inboundLegCourse(): DegreesTrue {
-        // return SimVar.GetSimVarValue('L:HOLD_COURSE', 'number');
-        return this.to.additionalData.course;
+        return this.fix.additionalData.course;
     }
 
     get outboundLegCourse(): DegreesTrue {
@@ -77,12 +91,11 @@ export class HMLeg extends XFLeg {
     }
 
     get turnDirection(): TurnDirection {
-        // return SimVar.GetSimVarValue('L:HOLD_LEFT', 'number') > 0 ? TurnDirection.Left : TurnDirection.Right;
-        return this.to.turnDirection;
+        return this.fix.turnDirection;
     }
 
     get ident(): string {
-        return this.to.ident;
+        return this.fix.ident;
     }
 
     /**
@@ -95,101 +108,23 @@ export class HMLeg extends XFLeg {
         this.initialState = initialState;
     }
 
-    setTransitionEndPoint(endPoint: Coordinates): void {
-        this.transitionEndPoint = endPoint;
-    }
-
-    /**
-     * Use for IMM EXIT set/reset function on the MCDU
-     * Note: if IMM EXIT is set before this leg is active it should be deleted from the f-pln instead
-     * @param
-     */
-    setImmediateExit(exit: boolean, ppos: LatLongData, tas: Knots): void {
-        if (exit) {
-            switch (this.state) {
-            case HxLegGuidanceState.Arc1:
-                // let's do a circle
-                this.immExitLength = 0;
-                break;
-            case HxLegGuidanceState.Outbound:
-                const { fixA, sweepAngle } = this.computeGeometry();
-                const nextPhi = sweepAngle > 0 ? maxBank(tas, true) : -maxBank(tas, true);
-                // TODO maybe need a little anticipation distance added.. we will start off with XTK and should already be at or close to max bank...
-                const rad = Geometry.getRollAnticipationDistance(tas, 0, nextPhi);
-                this.immExitLength = rad + courseToFixDistanceToGo(ppos, this.inboundLegCourse, fixA);
-                break;
-            case HxLegGuidanceState.Arc2:
-            case HxLegGuidanceState.Inbound:
-                // keep the normal leg distance as we can't shorten
-                this.immExitLength = this.computeLegDistance();
-                break;
-            // no default
-            }
-        }
-
-        // hack to allow f-pln page to see state
-        this.to.additionalData.immExit = exit;
-
-        this.immExitRequested = exit;
-
-        // if resuming hold, the geometry will be recomputed on the next pass of the hold fix
-        if (exit) {
-            this.geometry = this.computeGeometry();
-        }
-    }
-
-    /**
-     * Compute target speed in KTAS
-     * @todo temp until vnav can give this
-     * @returns
-     */
-    targetSpeed(): Knots {
-        // TODO unhax, need altitude => speed from vnav if not coded
-        const alt = this.to.legAltitude1 ?? SimVar.GetSimVarValue('INDICATED ALTITUDE', 'feet');
-        // FIXME we assume ISA atmosphere for now, and that we're holding below the tropopause
-        const temperature = 288.15 - 0.0019812 * alt;
-        const pressure = 1013.25 * (temperature / 288.15) ** 5.25588;
-
-        const greenDot = SimVar.GetSimVarValue('L:A32NX_SPEEDS_GD', 'number');
-        let kcas = greenDot > 0 ? greenDot : 220;
-        if (this.to.speedConstraint > 100) {
-            kcas = Math.min(kcas, this.to.speedConstraint);
-        }
-        // apply icao limits
-        if (alt < 14000) {
-            kcas = Math.min(230, kcas);
-        } else if (alt < 20000) {
-            kcas = Math.min(240, kcas);
-        } else if (alt < 34000) {
-            kcas = Math.min(265, kcas);
-        } else {
-            kcas = Math.min(
-                MathUtils.convertMachToKCas(0.83, temperature, pressure),
-                kcas,
-            );
-        }
-        // TODO apply speed limit/alt
-
-        return MathUtils.convertKCasToKTAS(kcas, temperature, pressure);
-    }
-
     get outboundStartPoint(): Coordinates {
         const { fixB } = this.computeGeometry();
         return fixB;
     }
 
     public computeLegDistance(): NauticalMiles {
-        if (this.immExitRequested) {
-            return this.immExitLength;
-        }
         // is distance in NM?
-        if (this.to.additionalData.distance > 0) {
-            return this.to.additionalData.distance;
+        if (this.fix.additionalData.distance !== undefined) {
+            return this.fix.additionalData.distance;
         }
 
+        const alt = this.fix.legAltitude1 ?? SimVar.GetSimVarValue('INDICATED ALTITUDE', 'feet');
+
         // distance is in time then...
-        const defaultMinutes = this.to.legAltitude1 ? 1 : 1.5;
-        return (this.to.additionalData.distanceInMinutes > 0 ? this.to.additionalData.distanceInMinutes : defaultMinutes) * this.predictedSpeed / 60;
+        const defaultMinutes = alt < 14000 ? 1 : 1.5;
+        const inboundGroundSpeed = (this.predictedTas + (this.inboundWindSpeed ?? 0));
+        return (this.fix.additionalData.distanceInMinutes !== undefined ? this.fix.additionalData.distanceInMinutes : defaultMinutes) * inboundGroundSpeed / 60;
     }
 
     protected computeGeometry(): HxGeometry {
@@ -204,18 +139,41 @@ export class HMLeg extends XFLeg {
          *      hold fix      C
          */
 
-        // TODO calculate IMM EXIT shortened leg if necessary
-
-        const distance = this.computeLegDistance();
+        const legLength = this.computeLegDistance();
         const radius = this.radius;
-        const leftTurn = this.turnDirection === TurnDirection.Left;
+        const turnSign = this.turnDirection === TurnDirection.Left ? -1 : 1;
 
-        const fixA = Avionics.Utils.bearingDistanceToCoordinates(this.inboundLegCourse + (leftTurn ? -90 : 90), radius * 2, this.to.infos.coordinates.lat, this.to.infos.coordinates.long);
-        const fixB = Avionics.Utils.bearingDistanceToCoordinates(this.outboundLegCourse, distance, fixA.lat, fixA.long);
-        const fixC = Avionics.Utils.bearingDistanceToCoordinates(this.outboundLegCourse, distance, this.to.infos.coordinates.lat, this.to.infos.coordinates.long);
+        const fixA = Avionics.Utils.bearingDistanceToCoordinates(
+            this.inboundLegCourse + turnSign * 90,
+            radius * 2,
+            this.fix.infos.coordinates.lat,
+            this.fix.infos.coordinates.long,
+        );
+        const fixB = Avionics.Utils.bearingDistanceToCoordinates(
+            this.outboundLegCourse,
+            legLength,
+            fixA.lat,
+            fixA.long,
+        );
+        const fixC = Avionics.Utils.bearingDistanceToCoordinates(
+            this.outboundLegCourse,
+            legLength,
+            this.fix.infos.coordinates.lat,
+            this.fix.infos.coordinates.long,
+        );
 
-        const arcCentreFix1 = Avionics.Utils.bearingDistanceToCoordinates(this.inboundLegCourse + (leftTurn ? -90 : 90), radius, this.to.infos.coordinates.lat, this.to.infos.coordinates.long);
-        const arcCentreFix2 = Avionics.Utils.bearingDistanceToCoordinates(this.inboundLegCourse + (leftTurn ? -90 : 90), radius, fixC.lat, fixC.long);
+        const arcCentreFix1 = Avionics.Utils.bearingDistanceToCoordinates(
+            this.inboundLegCourse + turnSign * 90,
+            radius,
+            this.fix.infos.coordinates.lat,
+            this.fix.infos.coordinates.long,
+        );
+        const arcCentreFix2 = Avionics.Utils.bearingDistanceToCoordinates(
+            this.inboundLegCourse + turnSign * 90,
+            radius,
+            fixC.lat,
+            fixC.long,
+        );
 
         return {
             fixA,
@@ -223,25 +181,25 @@ export class HMLeg extends XFLeg {
             fixC,
             arcCentreFix1,
             arcCentreFix2,
-            sweepAngle: leftTurn ? -180 : 180,
+            sweepAngle: turnSign * 180,
+            legLength,
+            radius,
         };
     }
 
     get radius(): NauticalMiles {
-        // TODO account for wind
-        const gsMs = this.predictedSpeed / 1.94384;
-        const radius = (gsMs ** 2 / (9.81 * Math.tan(maxBank(this.predictedSpeed, true) * Math.PI / 180)) / 1852) * LnavConfig.TURN_RADIUS_FACTOR;
+        const gsMs = this.predictedGs / 1.94384;
+        const radius = (gsMs ** 2 / (9.81 * Math.tan(maxBank(this.predictedTas, true) * Math.PI / 180)) / 1852);
 
         return radius;
     }
 
     get terminationPoint(): LatLongAlt {
-        return this.to.infos.coordinates;
+        return this.fix.infos.coordinates;
     }
 
     get distance(): NauticalMiles {
-        // TODO fix...
-        return this.computeLegDistance() * 4;
+        return 0; // 0 so no PWPs
     }
 
     get inboundCourse(): Degrees {
@@ -271,9 +229,9 @@ export class HMLeg extends XFLeg {
 
         switch (this.state) {
         case HxLegGuidanceState.Inbound:
-            return courseToFixDistanceToGo(ppos, this.inboundLegCourse, this.to.infos.coordinates);
+            return courseToFixDistanceToGo(ppos, this.inboundLegCourse, this.fix.infos.coordinates);
         case HxLegGuidanceState.Arc1:
-            return arcDistanceToGo(ppos, this.to.infos.coordinates, arcCentreFix1, sweepAngle) + this.computeLegDistance() * 2 + this.radius * Math.PI;
+            return arcDistanceToGo(ppos, this.fix.infos.coordinates, arcCentreFix1, sweepAngle) + this.computeLegDistance() * 2 + this.radius * Math.PI;
         case HxLegGuidanceState.Outbound:
             return courseToFixDistanceToGo(ppos, this.outboundLegCourse, fixB) + this.computeLegDistance() + this.radius * Math.PI;
         case HxLegGuidanceState.Arc2:
@@ -288,13 +246,13 @@ export class HMLeg extends XFLeg {
         return this.getDistanceToGoThisOrbit(ppos);
     }
 
-    get predictedPath(): PathVector[] {
+    getHippodromePath(): PathVector[] {
         const { fixA, fixB, fixC, arcCentreFix1, arcCentreFix2, sweepAngle } = this.geometry;
 
         return [
             {
                 type: PathVectorType.Arc,
-                startPoint: this.to.infos.coordinates,
+                startPoint: this.fix.infos.coordinates,
                 centrePoint: arcCentreFix1,
                 endPoint: fixA,
                 sweepAngle,
@@ -314,9 +272,13 @@ export class HMLeg extends XFLeg {
             {
                 type: PathVectorType.Line,
                 startPoint: fixC,
-                endPoint: this.to.infos.coordinates,
+                endPoint: this.fix.infos.coordinates,
             },
         ];
+    }
+
+    get predictedPath(): PathVector[] {
+        return this.getHippodromePath();
     }
 
     updateState(ppos: LatLongAlt, tas: Knots, geometry: HxGeometry): void {
@@ -326,11 +288,11 @@ export class HMLeg extends XFLeg {
 
         switch (this.state) {
         case HxLegGuidanceState.Inbound: {
-            dtg = courseToFixDistanceToGo(ppos, this.inboundLegCourse, this.to.infos.coordinates);
+            dtg = courseToFixDistanceToGo(ppos, this.inboundLegCourse, this.fix.infos.coordinates);
             break;
         }
         case HxLegGuidanceState.Arc1: {
-            dtg = arcDistanceToGo(ppos, this.to.infos.coordinates, geometry.arcCentreFix1, geometry.sweepAngle);
+            dtg = arcDistanceToGo(ppos, this.fix.infos.coordinates, geometry.arcCentreFix1, geometry.sweepAngle);
             break;
         }
         case HxLegGuidanceState.Outbound: {
@@ -347,81 +309,99 @@ export class HMLeg extends XFLeg {
 
         if (dtg <= 0) {
             if (this.state === HxLegGuidanceState.Inbound) {
-                if (this.immExitRequested) {
+                if (this.termConditionMet) {
                     return;
                 }
-                this.updatePrediction(tas);
+                this.updatePrediction();
             }
             this.state = (this.state + 1) % (HxLegGuidanceState.Arc2 + 1);
             console.log(`HX switched to state ${HxLegGuidanceState[this.state]}`);
         }
     }
 
-    getGuidanceParameters(ppos: LatLongAlt, trueTrack: Degrees, tas: Knots): GuidanceParameters {
-        const { fixB, arcCentreFix1, arcCentreFix2, sweepAngle } = this.geometry;
+    getGuidanceParameters(ppos: LatLongAlt, trueTrack: Degrees, tas: Knots, gs: Knots): GuidanceParameters {
+        const { fixB, arcCentreFix1, arcCentreFix2, sweepAngle, legLength } = this.geometry;
 
         this.updateState(ppos, tas, this.geometry);
 
         let params: LateralPathGuidance;
         let dtg: NauticalMiles;
         let nextPhi = 0;
-        let prevPhi = 0;
+        let rad = 0;
 
         switch (this.state) {
         case HxLegGuidanceState.Inbound:
-            params = courseToFixGuidance(ppos, trueTrack, this.inboundLegCourse, this.to.infos.coordinates);
-            dtg = courseToFixDistanceToGo(ppos, this.inboundLegCourse, this.to.infos.coordinates);
+            params = courseToFixGuidance(ppos, trueTrack, this.inboundLegCourse, this.fix.infos.coordinates);
+            dtg = courseToFixDistanceToGo(ppos, this.inboundLegCourse, this.fix.infos.coordinates);
             nextPhi = sweepAngle > 0 ? maxBank(tas, true) : -maxBank(tas, true);
+            rad = Geometry.getRollAnticipationDistance(gs, params.phiCommand, nextPhi);
             break;
         case HxLegGuidanceState.Arc1:
-            params = arcGuidance(ppos, trueTrack, this.to.infos.coordinates, arcCentreFix1, sweepAngle);
-            dtg = arcDistanceToGo(ppos, this.to.infos.coordinates, arcCentreFix1, sweepAngle);
-            prevPhi = params.phiCommand;
+            params = arcGuidance(ppos, trueTrack, this.fix.infos.coordinates, arcCentreFix1, sweepAngle);
+            dtg = arcDistanceToGo(ppos, this.fix.infos.coordinates, arcCentreFix1, sweepAngle);
+            rad = Geometry.getRollAnticipationDistance(gs, params.phiCommand, nextPhi);
+            if (legLength <= rad) {
+                nextPhi = params.phiCommand;
+            }
             break;
         case HxLegGuidanceState.Outbound:
             params = courseToFixGuidance(ppos, trueTrack, this.outboundLegCourse, fixB);
             dtg = courseToFixDistanceToGo(ppos, this.outboundLegCourse, fixB);
             nextPhi = sweepAngle > 0 ? maxBank(tas, true) : -maxBank(tas, true);
+            rad = Geometry.getRollAnticipationDistance(gs, params.phiCommand, nextPhi);
             break;
         case HxLegGuidanceState.Arc2:
             params = arcGuidance(ppos, trueTrack, fixB, arcCentreFix2, sweepAngle);
             dtg = arcDistanceToGo(ppos, fixB, arcCentreFix2, sweepAngle);
-            prevPhi = params.phiCommand;
+            rad = Geometry.getRollAnticipationDistance(gs, params.phiCommand, nextPhi);
+            if (legLength <= rad) {
+                nextPhi = params.phiCommand;
+            }
             break;
         default:
             throw new Error(`Bad HxLeg state ${this.state}`);
         }
 
-        const rad = Geometry.getRollAnticipationDistance(tas, prevPhi, nextPhi);
-        if (dtg <= rad) {
+        // TODO HF/HA too
+        if (dtg <= rad && !(this.state === HxLegGuidanceState.Inbound && this.termConditionMet)) {
             params.phiCommand = nextPhi;
         }
 
         return params;
     }
 
-    recomputeWithParameters(isActive: boolean, _tas: Knots, _gs: Knots, _ppos: Coordinates, _trueTrack: DegreesTrue, _previousGuidable: Guidable, _nextGuidable: Guidable): void {
-        // TODO store IMM EXIT point and termConditionMet flag, consider changes to hold params
-        // console.log(this.predictedPath);
+    recomputeWithParameters(
+        isActive: boolean,
+        _tas: Knots,
+        _gs: Knots,
+        _ppos: Coordinates,
+        _trueTrack: DegreesTrue,
+        _startAltitude?: Feet,
+        _verticalSpeed?: FeetPerMinute,
+    ): void {
         if (!isActive) {
-            this.updatePrediction(this.predictedSpeed);
+            this.updatePrediction();
         }
+    }
+
+    setPredictedTas(tas: Knots) {
+        this.nextPredictedTas = tas;
     }
 
     /**
      * Should be called on each crossing of the hold fix
      */
-    updatePrediction(tas: number) {
-        this.predictedSpeed = tas;
+    updatePrediction() {
+        const windDirection = SimVar.GetSimVarValue('AMBIENT WIND DIRECTION', 'Degrees');
+        const windSpeed = SimVar.GetSimVarValue('AMBIENT WIND VELOCITY', 'Knots');
+        const windAngleToInbound = Math.abs(Avionics.Utils.diffAngle(windDirection, this.inboundCourse));
+        this.inboundWindSpeed = Math.cos(windAngleToInbound * Math.PI / 180) * windSpeed;
+
+        this.predictedTas = this.nextPredictedTas;
+        this.predictedGs = this.predictedTas + windSpeed;
         this.geometry = this.computeGeometry();
 
-        // hack to allow f-pln page to show the speed
-        // TODO unhax, need altitude => speed from vnav if not coded
-        const alt = this.to.legAltitude1 ?? SimVar.GetSimVarValue('INDICATED ALTITUDE', 'feet');
-        // FIXME we assume ISA atmosphere for now, and that we're holding below the tropopause
-        const temperature = 288.15 - 0.0019812 * alt;
-        const pressure = 1013.25 * (temperature / 288.15) ** 5.25588;
-        this.to.additionalData.holdSpeed = MathUtils.convertTasToKCas(this.predictedSpeed, temperature, pressure);
+        // TODO update entry transition too
     }
 
     // TODO are we even using this? What exactly should it tell us?
@@ -430,25 +410,84 @@ export class HMLeg extends XFLeg {
     }
 
     getPathStartPoint(): Coordinates {
-        return this.to.infos.coordinates;
+        return this.fix.infos.coordinates;
     }
 
     getPathEndPoint(): Coordinates {
         // TODO consider early exit to CF on HF leg
-        return this.to.infos.coordinates;
-    }
-
-    get disableAutomaticSequencing(): boolean {
-        return !this.immExitRequested;
-    }
-
-    get repr(): string {
-        return `${this.constructor.name.substr(0, 2)} '${this.to.ident}' ${TurnDirection[this.turnDirection]}`;
+        return this.fix.infos.coordinates;
     }
 }
 
-export class HALeg extends HMLeg {
-    private targetAltitude: Feet;
+export class HMLeg extends HXLeg {
+    // TODO only reset this on crossing the hold fix (so exit/resume/exit keeps the existing shortened path)
+    private immExitLength: NauticalMiles;
+
+    /**
+     * Use for IMM EXIT set/reset function on the MCDU
+     * Note: if IMM EXIT is set before this leg is active it should be deleted from the f-pln instead
+     * @param
+     */
+    setImmediateExit(exit: boolean, ppos: LatLongData, tas: Knots): void {
+        // TODO if we're still in the entry transition, HM becomes empty, but still fly the entry
+
+        const { legLength, fixA, sweepAngle } = this.geometry;
+        if (exit) {
+            switch (this.state) {
+            case HxLegGuidanceState.Arc1:
+                // let's do a circle
+                this.immExitLength = 0;
+                break;
+            case HxLegGuidanceState.Outbound:
+                const nextPhi = sweepAngle > 0 ? maxBank(tas, true) : -maxBank(tas, true);
+                const rad = Geometry.getRollAnticipationDistance(tas, 0, nextPhi);
+                this.immExitLength = Math.min(legLength, rad + courseToFixDistanceToGo(ppos, this.inboundLegCourse, fixA));
+                break;
+            case HxLegGuidanceState.Arc2:
+            case HxLegGuidanceState.Inbound:
+                // keep the normal leg distance as we can't shorten
+                this.immExitLength = legLength;
+                break;
+            // no default
+            }
+        }
+
+        // hack to allow f-pln page to see state
+        this.fix.additionalData.immExit = exit;
+
+        this.termConditionMet = exit;
+
+        // if resuming hold, the geometry will be recomputed on the next pass of the hold fix
+        if (exit) {
+            this.geometry = this.computeGeometry();
+        }
+    }
+
+    public computeLegDistance(): NauticalMiles {
+        if (this.termConditionMet) {
+            return this.immExitLength;
+        }
+
+        return super.computeLegDistance();
+    }
+
+    get disableAutomaticSequencing(): boolean {
+        return !this.termConditionMet;
+    }
+
+    get repr(): string {
+        return `HM '${this.fix.ident}' ${TurnDirection[this.turnDirection]}`;
+    }
+}
+
+// TODO
+/*
+If the aircraft reaches or exceeds the altitude
+specified in the flight plan before the HA leg is active, the aircraft
+does not enter the hold
+*/
+export class HALeg extends HXLeg {
+    private readonly targetAltitude: Feet;
 
     constructor(
         public to: WayPoint,
@@ -458,166 +497,91 @@ export class HALeg extends HMLeg {
         super(to, metadata, segment);
 
         // the term altitude is guaranteed to be at or above, and in field altitude1, by ARINC424 coding rules
-        if (this.to.legAltitudeDescription !== AltitudeDescriptor.AtOrAbove) {
-            console.warn(`HALeg invalid altitude descriptor ${this.to.legAltitudeDescription}, must be ${AltitudeDescriptor.AtOrAbove}`);
+        if (this.fix.legAltitudeDescription !== AltitudeDescriptor.AtOrAbove) {
+            console.warn(`HALeg invalid altitude descriptor ${this.fix.legAltitudeDescription}, must be ${AltitudeDescriptor.AtOrAbove}`);
         }
-        this.targetAltitude = this.to.legAltitude1;
+        this.targetAltitude = this.fix.legAltitude1;
     }
 
-    getGuidanceParameters(ppos: LatLongAlt, trueTrack: Degrees, tas: Knots): GuidanceParameters {
-        // TODO get altitude, check for at or above our target
-        // TODO do we need to force at least one circuit if already at the term altitude on entry? honeywell doc covers this..
-        // FIXME use FMGC position data
-        this.termConditionMet = SimVar.GetSimVarValue('INDICATED ALTITUDE', 'feet') >= this.targetAltitude;
+    getGuidanceParameters(ppos: LatLongAlt, trueTrack: Degrees, tas: Knots, gs: Knots): GuidanceParameters {
+        if (SimVar.GetSimVarValue('INDICATED ALTITUDE', 'feet') >= this.targetAltitude) {
+            this.termConditionMet = true;
+        }
 
-        return super.getGuidanceParameters(ppos, trueTrack, tas);
+        return super.getGuidanceParameters(ppos, trueTrack, tas, gs);
+    }
+
+    recomputeWithParameters(isActive: boolean, tas: Knots, gs: Knots, ppos: Coordinates, trueTrack: DegreesTrue): void {
+        if (SimVar.GetSimVarValue('INDICATED ALTITUDE', 'feet') >= this.targetAltitude) {
+            this.termConditionMet = true;
+        }
+        if (!isActive && this.termConditionMet) {
+            this.isNull = true;
+        }
+        this.setPredictedTas(tas);
+        super.recomputeWithParameters(isActive, tas, gs, ppos, trueTrack);
     }
 
     getDistanceToGo(ppos: LatLongData): NauticalMiles {
+        if (this.isNull) {
+            return 0;
+        }
         if (this.termConditionMet) {
             return this.getDistanceToGoThisOrbit(ppos);
         }
-        // TODO compute distance until alt (vnav) + remainder of last orbit
-        return 42;
-    }
-
-    recomputeWithParameters(_isActive: boolean, _tas: Knots, _gs: Knots, _ppos: Coordinates, _trueTrack: DegreesTrue, _previousGuidable: Guidable, _nextGuidable: Guidable): void {
-        this.termConditionMet = SimVar.GetSimVarValue('INDICATED ALTITUDE', 'feet') >= this.targetAltitude;
+        const { legLength, radius } = this.geometry;
+        return legLength * 2 + radius * Math.PI * 2;
     }
 
     get disableAutomaticSequencing(): boolean {
-        return false;
+        return !this.termConditionMet;
     }
 
     get predictedPath(): PathVector[] {
-        if (!this.termConditionMet) {
+        if (!this.isNull) {
             return super.predictedPath;
         }
+        return [];
+    }
 
-        const { fixA, fixB, fixC, arcCentreFix1, arcCentreFix2, sweepAngle } = this.computeGeometry();
-
-        const path = [];
-
-        path.push({
-            type: PathVectorType.Line,
-            startPoint: fixC,
-            endPoint: this.to.infos.coordinates,
-        });
-
-        if (this.state === HxLegGuidanceState.Inbound) {
-            return path;
-        }
-
-        path.push({
-            type: PathVectorType.Arc,
-            startPoint: fixB,
-            centrePoint: arcCentreFix2,
-            endPoint: fixC,
-            sweepAngle,
-        });
-
-        if (this.state === HxLegGuidanceState.Arc2) {
-            return path;
-        }
-
-        path.push({
-            type: PathVectorType.Line,
-            startPoint: fixA,
-            endPoint: fixB,
-        });
-
-        if (this.state === HxLegGuidanceState.Outbound) {
-            return path;
-        }
-
-        path.push({
-            type: PathVectorType.Arc,
-            startPoint: this.to.infos.coordinates,
-            centrePoint: arcCentreFix1,
-            endPoint: fixA,
-            sweepAngle,
-        });
-
-        return path;
+    get repr(): string {
+        return `HA '${this.fix.ident}' ${TurnDirection[this.turnDirection]} - ${this.targetAltitude.toFixed(0)}`;
     }
 }
 
-export class HFLeg extends HMLeg {
-    // TODO special predicted path for early exit to CF
+export class HFLeg extends HXLeg {
+    private entryTransition: HoldEntryTransition;
 
-    getGuidanceParameters(ppos: LatLongAlt, trueTrack: Degrees, tas: Knots): GuidanceParameters {
-        // always terminate on first crossing of holding fix after entry
-        this.termConditionMet = true;
-        return super.getGuidanceParameters(ppos, trueTrack, tas);
+    getGuidanceParameters(ppos: LatLongAlt, trueTrack: Degrees, tas: Knots, gs: Knots): GuidanceParameters {
+        if (this.entryTransition) {
+            this.termConditionMet = this.entryTransition.isNull || this.entryTransition.state === EntryState.Capture || this.entryTransition.state === EntryState.Done;
+        }
+
+        return super.getGuidanceParameters(ppos, trueTrack, tas, gs);
+    }
+
+    recomputeWithParameters(isActive: boolean, tas: Knots, gs: Knots, ppos: Coordinates, trueTrack: DegreesTrue): void {
+        if (this.inboundGuidable instanceof HoldEntryTransition) {
+            this.entryTransition = this.inboundGuidable;
+            this.termConditionMet = this.entryTransition.isNull || this.entryTransition.state === EntryState.Capture || this.entryTransition.state === EntryState.Done;
+        }
+        this.setPredictedTas(tas);
+        super.recomputeWithParameters(isActive, tas, gs, ppos, trueTrack);
     }
 
     getDistanceToGo(ppos: LatLongData): NauticalMiles {
-        // TODO early exit to CF leg...
-        return super.getDistanceToGoThisOrbit(ppos);
+        return this.entryTransition?.getDistanceToGo(ppos) ?? 0;
+    }
+
+    get predictedPath(): PathVector[] {
+        return [];
     }
 
     get disableAutomaticSequencing(): boolean {
         return false;
     }
 
-    get predictedPath(): PathVector[] {
-        const { fixA, fixB, fixC, arcCentreFix1, arcCentreFix2, sweepAngle } = this.computeGeometry();
-
-        const path = [];
-
-        path.push({
-            type: PathVectorType.Line,
-            startPoint: fixC,
-            endPoint: this.to.infos.coordinates,
-        });
-
-        if (this.initialState === HxLegGuidanceState.Inbound) {
-            if (this.transitionEndPoint) {
-                path[0].startPoint = this.transitionEndPoint;
-            }
-            return path;
-        }
-
-        path.push({
-            type: PathVectorType.Arc,
-            startPoint: fixB,
-            centrePoint: arcCentreFix2,
-            endPoint: fixC,
-            sweepAngle,
-        });
-
-        if (this.initialState === HxLegGuidanceState.Arc2) {
-            if (this.transitionEndPoint) {
-                path[1].startPoint = this.transitionEndPoint;
-            }
-            return path;
-        }
-
-        path.push({
-            type: PathVectorType.Line,
-            startPoint: fixA,
-            endPoint: fixB,
-        });
-
-        if (this.initialState === HxLegGuidanceState.Outbound) {
-            if (this.transitionEndPoint) {
-                path[2].startPoint = this.transitionEndPoint;
-            }
-            return path;
-        }
-
-        path.push({
-            type: PathVectorType.Arc,
-            startPoint: this.to.infos.coordinates,
-            centrePoint: arcCentreFix1,
-            endPoint: fixA,
-            sweepAngle,
-        });
-
-        if (this.transitionEndPoint) {
-            path[3].startPoint = this.transitionEndPoint;
-        }
-
-        return path;
+    get repr(): string {
+        return `HF '${this.fix.ident}' ${TurnDirection[this.turnDirection]}`;
     }
 }

@@ -1,13 +1,12 @@
 import React, { FC, memo, useEffect, useState } from 'react';
 import { useSimVar } from '@instruments/common/simVars';
 import { Layer, getSmallestAngle } from '@instruments/common/utils';
-import { useFlightPlanManager } from '@instruments/common/flightplan';
 import { MathUtils } from '@shared/MathUtils';
 import { TuningMode } from '@fmgc/radionav';
 import { Mode, EfisSide, NdSymbol } from '@shared/NavigationDisplay';
 import { ArmedLateralMode, isArmed, LateralMode } from '@shared/autopilot';
 import { ToWaypointIndicator } from '../elements/ToWaypointIndicator';
-import { FlightPlan, FlightPlanType } from '../elements/FlightPlan';
+import { FlightPlan } from '../elements/FlightPlan';
 import { MapParameters } from '../utils/MapParameters';
 import { RadioNeedle } from '../elements/RadioNeedles';
 import { ApproachMessage } from '../elements/ApproachMessage';
@@ -26,17 +25,13 @@ export interface RoseModeProps {
 }
 
 export const RoseMode: FC<RoseModeProps> = ({ symbols, adirsAlign, rangeSetting, mode, side, ppos, mapHidden }) => {
-    const flightPlanManager = useFlightPlanManager();
-
     const [magHeading] = useSimVar('PLANE HEADING DEGREES MAGNETIC', 'degrees');
     const [magTrack] = useSimVar('GPS GROUND MAGNETIC TRACK', 'degrees');
     const [trueHeading] = useSimVar('PLANE HEADING DEGREES TRUE', 'degrees');
     const [tcasMode] = useSimVar('L:A32NX_SWITCH_TCAS_Position', 'number');
-    const [fmgcFlightPhase] = useSimVar('L:A32NX_FMGC_FLIGHT_PHASE', 'enum');
     const [selectedHeading] = useSimVar('L:A32NX_AUTOPILOT_HEADING_SELECTED', 'degrees');
     const [lsCourse] = useSimVar('L:A32NX_FM_LS_COURSE', 'number');
     const [lsDisplayed] = useSimVar(`L:BTN_LS_${side === 'L' ? 1 : 2}_FILTER_ACTIVE`, 'bool'); // TODO rename simvar
-    const [showTmpFplan] = useSimVar('L:MAP_SHOW_TEMPORARY_FLIGHT_PLAN', 'bool');
     const [fmaLatMode] = useSimVar('L:A32NX_FMA_LATERAL_MODE', 'enum', 200);
     const [armedLateralBitmask] = useSimVar('L:A32NX_FMA_LATERAL_ARMED', 'enum', 200);
     const [groundSpeed] = useSimVar('GPS GROUND SPEED', 'Meters per second', 200);
@@ -82,10 +77,9 @@ export const RoseMode: FC<RoseModeProps> = ({ symbols, adirsAlign, rangeSetting,
                                 debug={false}
                             />
 
-                            { (((fmaLatMode === LateralMode.NONE || fmaLatMode === LateralMode.HDG || fmaLatMode === LateralMode.TRACK)
-                                && !isArmed(armedLateralBitmask, ArmedLateralMode.NAV))
-                                || !flightPlanManager.getCurrentFlightPlan().length) && (
-                                <TrackLine x={384} y={384} heading={heading} track={track} />
+                            { ((fmaLatMode === LateralMode.NONE || fmaLatMode === LateralMode.HDG || fmaLatMode === LateralMode.TRACK)
+                                && !isArmed(armedLateralBitmask, ArmedLateralMode.NAV)) && (
+                                <TrackLine x={384} y={384} heading={heading} track={track} mapParams={mapParams} groundSpeed={groundSpeed} symbols={symbols} />
                             )}
                         </g>
                     )}
@@ -101,7 +95,7 @@ export const RoseMode: FC<RoseModeProps> = ({ symbols, adirsAlign, rangeSetting,
                 { mode === Mode.ROSE_VOR && <VorInfo side={side} /> }
                 { mode === Mode.ROSE_ILS && <IlsInfo /> }
 
-                <ApproachMessage info={flightPlanManager.getAirportApproach()} flightPhase={fmgcFlightPhase} />
+                <ApproachMessage side={side} />
                 <TrackBug heading={heading} track={track} />
                 { mode === Mode.ROSE_NAV && lsDisplayed && <LsCourseBug heading={heading} lsCourse={lsCourse} /> }
                 <SelectedHeadingBug heading={heading} selected={selectedHeading} />
@@ -637,8 +631,8 @@ const IlsCaptureOverlay: React.FC<{
     _side: EfisSide,
 }> = memo(({ heading, _side }) => {
     const [course] = useSimVar('NAV LOCALIZER:3', 'degrees');
-    const [courseDeviation] = useSimVar('NAV RADIAL ERROR:3', 'degrees', 20);
-    const [available] = useSimVar('NAV HAS LOCALIZER:3', 'number');
+    const [courseDeviation] = useSimVar('L:A32NX_RADIO_RECEIVER_LOC_DEVIATION', 'number', 20);
+    const [available] = useSimVar('L:A32NX_RADIO_RECEIVER_LOC_IS_VALID', 'number');
     const [cdiPx, setCdiPx] = useState(12);
 
     useEffect(() => {
@@ -823,7 +817,7 @@ const IlsInfo: FC = memo(() => {
     const [ilsFrequency] = useSimVar('NAV ACTIVE FREQUENCY:3', 'megahertz');
     const [ilsCourse] = useSimVar('NAV LOCALIZER:3', 'degrees');
     const [tuningMode] = useSimVar('L:A32NX_FMGC_RADIONAV_3_TUNING_MODE', 'enum');
-    const [locAvailable] = useSimVar('NAV HAS LOCALIZER:3', 'boolean');
+    const [locAvailable] = useSimVar('L:A32NX_RADIO_RECEIVER_LOC_IS_VALID', 'number');
 
     const [freqInt, freqDecimal] = ilsFrequency.toFixed(2).split('.', 2);
 
@@ -857,8 +851,8 @@ const IlsInfo: FC = memo(() => {
 
 const GlideSlope: FC = () => {
     // TODO need some photo refs for this
-    const [gsDeviation] = useSimVar('NAV GLIDE SLOPE ERROR:3', 'degrees');
-    const [gsAvailable] = useSimVar('NAV HAS GLIDE SLOPE:3', 'number');
+    const [gsDeviation] = useSimVar('L:A32NX_RADIO_RECEIVER_GS_DEVIATION', 'number');
+    const [gsAvailable] = useSimVar('L:A32NX_RADIO_RECEIVER_GS_IS_VALID', 'number');
 
     const deviationPx = gsDeviation / 0.8 * 128;
 

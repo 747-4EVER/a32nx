@@ -24,14 +24,14 @@ class CDUAtcMessagesRecord {
 
     static ShowPage(mcdu, messages = null, offset = 0, confirmErase = false) {
         if (!messages) {
-            messages = mcdu.atsuManager.atc.messages();
+            messages = mcdu.atsu.atc.messages();
         }
         mcdu.clearDisplay();
 
-        let eraseRecordTitle = "MSG RECORD";
+        let eraseRecordTitle = "\xa0MSG RECORD";
         let eraseRecordButton = "*ERASE";
         if (confirmErase) {
-            eraseRecordTitle = "ERASE MSG RECORD";
+            eraseRecordTitle = "\xa0ERASE MSG RECORD";
             eraseRecordButton = "*CONFIRM";
         }
 
@@ -98,7 +98,7 @@ class CDUAtcMessagesRecord {
             [msgStart[3]],
             [eraseRecordTitle],
             [eraseRecordButton],
-            ["ATC MENU", "MSG RECORD[color]inop"],
+            ["\xa0ATC MENU", "MSG RECORD\xa0[color]inop"],
             ["<RETURN", "PRINT*[color]inop"]
         ]);
 
@@ -110,7 +110,7 @@ class CDUAtcMessagesRecord {
             mcdu.onLeftInput[i] = (value) => {
                 if (messages[offset + i]) {
                     if (value === FMCMainDisplay.clrValue) {
-                        mcdu.atsuManager.removeMessage(messages[offset + i].UniqueMessageID);
+                        mcdu.atsu.removeMessage(messages[offset + i].UniqueMessageID);
                         CDUAtcMessagesRecord.ShowPage(mcdu, null, offset, false);
                     } else {
                         CDUAtcMessage.ShowPage(mcdu, messages, offset + i);
@@ -123,11 +123,13 @@ class CDUAtcMessagesRecord {
             return mcdu.getDelaySwitchPage();
         };
         mcdu.onLeftInput[4] = () => {
-            if (!confirmErase) {
-                CDUAtcMessagesRecord.ShowPage(mcdu, messages, offset, true);
-            } else {
-                mcdu.atsuManager.atc.cleanupMessages();
-                CDUAtcMessagesRecord.ShowPage(mcdu, null, 0, false);
+            if (messages.length !== 0) {
+                if (!confirmErase) {
+                    CDUAtcMessagesRecord.ShowPage(mcdu, messages, offset, true);
+                } else {
+                    mcdu.atsu.atc.cleanupMessages();
+                    CDUAtcMessagesRecord.ShowPage(mcdu, null, 0, false);
+                }
             }
         };
         mcdu.leftInputDelay[5] = () => {

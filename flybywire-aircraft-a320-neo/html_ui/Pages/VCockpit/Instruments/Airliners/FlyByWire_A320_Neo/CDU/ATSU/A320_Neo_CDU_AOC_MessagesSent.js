@@ -1,9 +1,21 @@
 class CDUAocMessagesSent {
-    static ShowPage(mcdu, messages = null, offset = 5) {
+    static ShowPage(mcdu, messages = null, page = 0) {
         if (!messages) {
-            messages = mcdu.atsuManager.aoc.outputMessages();
+            messages = mcdu.atsu.aoc.outputMessages();
         }
         mcdu.clearDisplay();
+        mcdu.page.Current = mcdu.page.AOCSentMsgs;
+
+        page = Math.max(0, Math.min(Math.floor((messages.length - 1) / 5), page));
+
+        // regular update due to showing dynamic data on this page
+        mcdu.page.SelfPtr = setTimeout(() => {
+            if (mcdu.page.Current === mcdu.page.AOCSentMsgs) {
+                CDUAocMessagesSent.ShowPage(mcdu, null, page);
+            }
+        }, mcdu.PageTimeout.Slow);
+
+        const offset = 5 + page * 5;
 
         const msgTimeHeaders = [];
         msgTimeHeaders.length = 6;
@@ -14,6 +26,21 @@ class CDUAocMessagesSent {
             }
             msgTimeHeaders[i] = header;
         }
+
+        let left = false, right = false;
+        if (messages.length > ((page + 1) * 5)) {
+            mcdu.onNextPage = () => {
+                CDUAocMessagesSent.ShowPage(mcdu, messages, page + 1);
+            };
+            right = true;
+        }
+        if (page > 0) {
+            mcdu.onPrevPage = () => {
+                CDUAocMessagesSent.ShowPage(mcdu, messages, page - 1);
+            };
+            left = true;
+        }
+        mcdu.setArrows(false, false, left, right);
 
         mcdu.setTemplate([
             ["AOC SENT MSGS"],
@@ -27,24 +54,9 @@ class CDUAocMessagesSent {
             [`${messages[offset - 2] ? "<" + translateAtsuMessageType(messages[offset - 2].Type) : ""}`],
             [msgTimeHeaders[1]],
             [`${messages[offset - 1] ? "<" + translateAtsuMessageType(messages[offset - 1].Type) : ""}`],
-            [""],
+            ["\xa0AOC MENU"],
             ["<RETURN"]
         ]);
-
-        if (messages.length > 4) {
-            mcdu.onNextPage = () => {
-                if (messages[offset - 1]) {
-                    offset *= 2;
-                }
-                CDUAocMessagesSent.ShowPage(mcdu, messages, offset);
-            };
-            mcdu.onPrevPage = () => {
-                if (messages[offset - 1]) {
-                    offset /= 2;
-                }
-                CDUAocMessagesSent.ShowPage(mcdu, messages, offset);
-            };
-        }
 
         for (let i = 0; i < 5; i++) {
             mcdu.leftInputDelay[i] = () => {
@@ -54,8 +66,8 @@ class CDUAocMessagesSent {
             mcdu.onLeftInput[i] = (value) => {
                 if (messages[offset - 5 + i]) {
                     if (value === FMCMainDisplay.clrValue) {
-                        mcdu.atsuManager.removeMessage(messages[offset - 5 + i].UniqueMessageID);
-                        CDUAocMessagesSent.ShowPage(mcdu, null, page);
+                        mcdu.atsu.removeMessage(messages[offset - 5 + i].UniqueMessageID);
+                        CDUAocMessagesSent.ShowPage(mcdu);
                     } else {
                         CDUAocMessageSentDetail.ShowPage(mcdu, messages, offset - 5 + i);
                     }

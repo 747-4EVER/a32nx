@@ -19,11 +19,14 @@ class A32NX_Boarding {
     }
 
     async init() {
-        // Set default pax (0)
-        await this.setPax(0);
-        await this.loadPaxPayload();
-        await this.loadCargoZero();
-        await this.loadCargoPayload();
+        const inDeveloperState = SimVar.GetSimVarValue("L:A32NX_DEVELOPER_STATE", "Bool");
+        if (!inDeveloperState) {
+            // Set default pax (0)
+            await this.setPax(0);
+            await this.loadPaxPayload();
+            await this.loadCargoZero();
+            await this.loadCargoPayload();
+        }
     }
 
     async fillPaxStation(station, paxToFill) {
@@ -60,7 +63,7 @@ class A32NX_Boarding {
     }
 
     async loadPaxPayload() {
-
+        const PAX_WEIGHT = SimVar.GetSimVarValue("L:A32NX_WB_PER_PAX_WEIGHT", "Number");
         for (const paxStation of Object.values(this.paxStations)) {
             await SimVar.SetSimVarValue(`PAYLOAD STATION WEIGHT:${paxStation.stationIndex}`, "kilograms", paxStation.pax * PAX_WEIGHT);
         }

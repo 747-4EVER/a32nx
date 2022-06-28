@@ -47,6 +47,7 @@ class AutothrustModelClass
     real_T eventTime_i;
     real_T eventTime_a;
     real_T eventTime_o;
+    real_T pY;
     real_T eventTime_k;
     real_T eventTime_c;
     athr_mode pMode;
@@ -74,6 +75,7 @@ class AutothrustModelClass
     boolean_T eventTime_not_empty_b;
     boolean_T pThrustMemoActive;
     boolean_T pUseAutoThrustControl;
+    boolean_T pY_not_empty;
     boolean_T latch;
     boolean_T sInhibit;
     boolean_T prev_TCAS_active;
@@ -123,6 +125,7 @@ class AutothrustModelClass
     real_T DiscreteTimeIntegratorVariableTs_Gain_k;
     real_T DiscreteTimeIntegratorVariableTs1_Gain_l;
     real_T DiscreteDerivativeVariableTs_InitialCondition;
+    real_T RateLimiterVariableTs_InitialCondition;
     real_T DiscreteTimeIntegratorVariableTs_InitialCondition;
     real_T DiscreteTimeIntegratorVariableTs_InitialCondition_p;
     real_T DiscreteTimeIntegratorVariableTs1_InitialCondition;
@@ -146,6 +149,8 @@ class AutothrustModelClass
     real_T DiscreteTimeIntegratorVariableTs1_UpperLimit_o;
     real_T CompareToConstant_const;
     real_T CompareToConstant2_const;
+    real_T RateLimiterVariableTs_lo;
+    real_T RateLimiterVariableTs_up;
     athr_mode CompareToConstant2_const_h;
     athr_mode CompareToConstant3_const;
     athr_mode CompareToConstant2_const_c;

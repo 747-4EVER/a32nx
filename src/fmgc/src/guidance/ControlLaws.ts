@@ -48,3 +48,20 @@ export type LateralPathGuidance = {
 }
 
 export type GuidanceParameters = HeadingGuidance | TrackGuidance | LateralPathGuidance;
+
+export type CompletedGuidanceParameters = GuidanceParameters & {
+    phiLimit: Degrees;
+};
+
+export enum RequestedVerticalMode {
+    None = 0,
+    SpeedThrust = 1,
+    VpathThrust = 2,
+    VpathSpeed = 3,
+    FpaSpeed = 4,
+    VsSpeed = 5,
+}
+
+export type TargetAltitude = Feet;
+
+export type TargetVerticalSpeed = FeetPerMinute | Degrees

@@ -6,8 +6,6 @@
 import { Transition } from '@fmgc/guidance/lnav/Transition';
 import { FixedRadiusTransition } from '@fmgc/guidance/lnav/transitions/FixedRadiusTransition';
 import { TFLeg } from '@fmgc/guidance/lnav/legs/TF';
-import { GeoMath } from '@fmgc/flightplanning/GeoMath';
-import { MathUtils } from '@shared/MathUtils';
 import { Coordinates } from '@fmgc/flightplanning/data/geo';
 import { SegmentType } from '@fmgc/flightplanning/FlightPlanSegment';
 import { Leg } from '@fmgc/guidance/lnav/legs/Leg';
@@ -17,8 +15,23 @@ import { CourseCaptureTransition } from '@fmgc/guidance/lnav/transitions/CourseC
 import { DirectToFixTransitionGuidanceState, DirectToFixTransition } from '@fmgc/guidance/lnav/transitions/DirectToFixTransition';
 import { PathVector } from '@fmgc/guidance/lnav/PathVector';
 import { CALeg } from '@fmgc/guidance/lnav/legs/CA';
-import { isCourseReversalLeg } from '@fmgc/guidance/lnav/legs';
-import { ControlLaw, GuidanceParameters, LateralPathGuidance } from './ControlLaws';
+import { isCourseReversalLeg, isHold } from '@fmgc/guidance/lnav/legs';
+import { maxBank } from '@fmgc/guidance/lnav/CommonGeometry';
+import { CILeg } from '@fmgc/guidance/lnav/legs/CI';
+import { CRLeg } from '@fmgc/guidance/lnav/legs/CR';
+import { VMLeg } from '@fmgc/guidance/lnav/legs/VM';
+import { TransitionPicker } from '@fmgc/guidance/lnav/TransitionPicker';
+import { ControlLaw, CompletedGuidanceParameters, LateralPathGuidance } from './ControlLaws';
+
+function isGuidableCapturingPath(guidable: Guidable): boolean {
+    return !(
+        guidable instanceof CALeg
+        || guidable instanceof CILeg
+        || guidable instanceof CRLeg
+        || guidable instanceof VMLeg
+        || guidable instanceof CourseCaptureTransition
+    );
+}
 
 export class Geometry {
     /**
@@ -35,9 +48,9 @@ export class Geometry {
 
     public version = 0;
 
-    private listener = RegisterViewListener('JS_LISTENER_SIMVARS');
+    private listener = RegisterViewListener('JS_LISTENER_SIMVARS', null, true);
 
-    constructor(transitions: Map<number, Transition>, legs: Map<number, Leg>) {
+    constructor(transitions: Map<number, Transition>, legs: Map<number, Leg>, private temp: boolean) {
         this.transitions = transitions;
         this.legs = legs;
     }
@@ -53,22 +66,34 @@ export class Geometry {
             return this.cachedVectors;
         }
 
+        const transmitHoldEntry = !this.temp;
+
         const ret = [];
 
         for (const [index, leg] of this.legs.entries()) {
+            if (leg.isNull) {
+                continue;
+            }
+
+            // TODO don't transmit any course reversals when this side range >= 160
+            const transmitCourseReversal = LnavConfig.DEBUG_FORCE_INCLUDE_COURSE_REVERSAL_VECTORS || index === activeLegIndex || index === (activeLegIndex + 1);
             if (activeLegIndex !== undefined) {
-                if (!LnavConfig.DEBUG_FORCE_INCLUDE_COURSE_REVERSAL_VECTORS && isCourseReversalLeg(leg) && index !== activeLegIndex && index !== (activeLegIndex + 1)) {
+                if (isCourseReversalLeg(leg) && !transmitCourseReversal) {
+                    continue;
+                }
+                if (index < activeLegIndex) {
                     continue;
                 }
             }
+            const legInboundTransition = leg.inboundGuidable instanceof Transition ? leg.inboundGuidable : null;
 
-            const legInboundTransition = this.transitions.get(index - 1);
-
-            if (legInboundTransition) {
+            if (legInboundTransition && !legInboundTransition.isNull && (!isHold(leg) || transmitHoldEntry)) {
                 ret.push(...legInboundTransition.predictedPath);
             }
 
-            ret.push(...leg.predictedPath);
+            if (leg) {
+                ret.push(...leg.predictedPath);
+            }
         }
 
         this.cachedVectors = ret;
@@ -87,7 +112,7 @@ export class Geometry {
      * @param activeLegIdx    current active leg index
      * @param activeTransIdx  current active transition index
      */
-    recomputeWithParameters(tas: Knots, gs: Knots, ppos: Coordinates, trueTrack: DegreesTrue, activeLegIdx: number, activeTransIdx: number) {
+    recomputeWithParameters(tas: Knots, gs: Knots, ppos: Coordinates, trueTrack: DegreesTrue, activeLegIdx: number, _activeTransIdx: number) {
         this.version++;
 
         if (LnavConfig.DEBUG_GEOMETRY) {
@@ -95,74 +120,18 @@ export class Geometry {
             console.time('geometry_recompute');
         }
 
-        for (let i = (activeLegIdx - 1) ?? 0; this.legs.get(i) || this.legs.get(i + 1); i++) {
-            const prevLegInbound = this.transitions.get(i - 2) ?? this.legs.get(i - 2);
-            const prevLeg = this.legs.get(i - 1);
-            const inboundTransition = this.transitions.get(i - 1);
-            const leg = this.legs.get(i);
-            const outboundTransition = this.transitions.get(i);
-            const nextLeg = this.legs.get(i + 1);
-
-            if (!leg) {
-                if (LnavConfig.DEBUG_GEOMETRY) {
-                    console.log(`[FMS/Geometry/Recompute] No leg at #${i}`);
-                }
-
+        for (let i = activeLegIdx ?? 0; this.legs.get(i) || this.legs.get(i + 1); i++) {
+            if (!this.legs.has(i)) {
                 continue;
             }
 
-            const predictWithCurrentSpeed = i < activeLegIdx + 3;
+            this.computeLeg(i, activeLegIdx, ppos, trueTrack, tas, gs);
 
-            const predictedLegTas = Math.max(LnavConfig.DEFAULT_MIN_PREDICTED_TAS, predictWithCurrentSpeed ? tas : (Geometry.getLegPredictedTas(leg) ?? tas));
-            const predictedLegGs = Math.max(LnavConfig.DEFAULT_MIN_PREDICTED_TAS, predictWithCurrentSpeed ? gs : predictedLegTas); // FIXME temporary
+            const leg = this.legs.get(i);
 
-            if (LnavConfig.DEBUG_GEOMETRY) {
-                console.log(`[FMS/Geometry/Recompute] Recomputing leg at #${i} (${leg?.repr ?? '<none>'})`);
+            if (leg?.isNull) {
+                this.computeLeg(i, activeLegIdx, ppos, trueTrack, tas, gs);
             }
-
-            if (inboundTransition && this.legs.get(i - 1)) {
-                if (LnavConfig.DEBUG_GEOMETRY) {
-                    console.log(`[FMS/Geometry/Recompute] Recomputing inbound transition (${inboundTransition.repr ?? '<unknown>'}) for leg (${leg?.repr ?? '<none>'})`);
-                }
-
-                inboundTransition.recomputeWithParameters(
-                    activeTransIdx === i - 1,
-                    predictedLegTas,
-                    predictedLegGs,
-                    ppos,
-                    trueTrack,
-                    prevLeg,
-                    leg,
-                );
-
-                // Recompute previous leg if inbound is an FXR, since we want it to end at the FXR transition path start
-                if (inboundTransition instanceof FixedRadiusTransition) {
-                    const predictWithCurrentSpeed = (i - 1) < activeLegIdx + 3;
-
-                    const prevLegPredictedLegTas = Math.max(LnavConfig.DEFAULT_MIN_PREDICTED_TAS, predictWithCurrentSpeed ? tas : (Geometry.getLegPredictedTas(prevLeg) ?? tas));
-                    const prevLegPredictedLegGs = Math.max(LnavConfig.DEFAULT_MIN_PREDICTED_TAS, predictWithCurrentSpeed ? gs : prevLegPredictedLegTas); // FIXME temporary
-
-                    prevLeg.recomputeWithParameters(
-                        activeLegIdx === i - 1,
-                        prevLegPredictedLegTas,
-                        prevLegPredictedLegGs,
-                        ppos,
-                        trueTrack,
-                        prevLegInbound,
-                        inboundTransition ?? leg,
-                    );
-                }
-            }
-
-            leg.recomputeWithParameters(
-                activeLegIdx === i,
-                predictedLegTas,
-                predictedLegGs,
-                ppos,
-                trueTrack,
-                inboundTransition ?? prevLeg,
-                outboundTransition ?? nextLeg,
-            );
         }
 
         if (LnavConfig.DEBUG_GEOMETRY) {
@@ -170,12 +139,127 @@ export class Geometry {
         }
     }
 
-    static getLegPredictedTas(leg: Leg) {
-        if (leg instanceof TFLeg) {
-            return leg.to?.additionalData?.predictedSpeed;
+    private computeLeg(index: number, activeLegIdx: number, ppos: Coordinates, trueTrack: DegreesTrue, tas: Knots, gs: Knots) {
+        const prevLeg = this.legs.get(index - 1);
+        const leg = this.legs.get(index);
+        const nextLeg = this.legs.get(index + 1);
+        const nextNextLeg = this.legs.get(index + 2);
+
+        const inboundTransition = this.transitions.get(index - 1);
+        const outboundTransition = this.transitions.get(index);
+
+        const predictedLegTas = Math.max(LnavConfig.DEFAULT_MIN_PREDICTED_TAS, Geometry.getLegPredictedTas(leg) ?? tas);
+        const predictedLegGs = Math.max(LnavConfig.DEFAULT_MIN_PREDICTED_TAS, Geometry.getLegPredictedGs(leg) ?? gs);
+
+        const predictedPrevLegTas = Math.max(LnavConfig.DEFAULT_MIN_PREDICTED_TAS, Geometry.getLegPredictedTas(prevLeg) ?? predictedLegTas);
+        const predictedPrevLegGs = Math.max(LnavConfig.DEFAULT_MIN_PREDICTED_TAS, Geometry.getLegPredictedGs(prevLeg) ?? predictedLegGs);
+
+        const predictedNextLegTas = Math.max(LnavConfig.DEFAULT_MIN_PREDICTED_TAS, Geometry.getLegPredictedTas(nextLeg) ?? predictedLegTas);
+        const predictedNextLegGs = Math.max(LnavConfig.DEFAULT_MIN_PREDICTED_TAS, Geometry.getLegPredictedGs(nextLeg) ?? predictedLegGs);
+
+        if (leg?.isNull) {
+            if (nextLeg) {
+                let newInboundTransition: Transition;
+                if ((LnavConfig.NUM_COMPUTED_TRANSITIONS_AFTER_ACTIVE === -1) || index - activeLegIdx < LnavConfig.NUM_COMPUTED_TRANSITIONS_AFTER_ACTIVE) {
+                    newInboundTransition = TransitionPicker.forLegs(prevLeg, nextLeg);
+                }
+
+                let newOutboundTransition: Transition;
+                if (nextNextLeg && (LnavConfig.NUM_COMPUTED_TRANSITIONS_AFTER_ACTIVE === -1) || (index + 1) - activeLegIdx < LnavConfig.NUM_COMPUTED_TRANSITIONS_AFTER_ACTIVE) {
+                    newOutboundTransition = TransitionPicker.forLegs(nextLeg, nextNextLeg);
+                }
+
+                if (newInboundTransition) {
+                    newInboundTransition.setNeighboringGuidables(prevLeg, nextLeg);
+                    newInboundTransition.setNeighboringLegs(prevLeg, nextLeg);
+                    newInboundTransition.recomputeWithParameters(
+                        activeLegIdx === index,
+                        predictedPrevLegTas,
+                        predictedPrevLegGs,
+                        ppos,
+                        trueTrack,
+                    );
+                }
+
+                nextLeg.setNeighboringGuidables(newInboundTransition ?? prevLeg, newOutboundTransition ?? nextNextLeg);
+                nextLeg.recomputeWithParameters(
+                    activeLegIdx === index,
+                    predictedNextLegTas,
+                    predictedNextLegGs,
+                    ppos,
+                    trueTrack,
+                );
+
+                if (newOutboundTransition) {
+                    newOutboundTransition.setNeighboringGuidables(nextLeg, nextNextLeg);
+                    newInboundTransition.setNeighboringLegs(prevLeg, nextLeg);
+                    newOutboundTransition.recomputeWithParameters(
+                        activeLegIdx === index + 1,
+                        predictedNextLegTas,
+                        predictedNextLegGs,
+                        ppos,
+                        trueTrack,
+                    );
+                }
+            }
         }
 
-        return undefined;
+        if (inboundTransition) {
+            inboundTransition.setNeighboringGuidables(prevLeg, leg);
+            inboundTransition.setNeighboringLegs(prevLeg, leg);
+            inboundTransition.recomputeWithParameters(
+                activeLegIdx === index,
+                predictedPrevLegTas,
+                predictedPrevLegGs,
+                ppos,
+                trueTrack,
+            );
+        }
+
+        if (!prevLeg || !prevLeg.isNull) {
+            leg.setNeighboringGuidables(inboundTransition ?? prevLeg, outboundTransition ?? nextLeg);
+            leg.recomputeWithParameters(
+                activeLegIdx === index,
+                predictedLegTas,
+                predictedLegGs,
+                ppos,
+                trueTrack,
+            );
+        }
+
+        if (!prevLeg || !prevLeg.isNull) {
+            if (outboundTransition) {
+                outboundTransition.setNeighboringGuidables(leg, nextLeg);
+                outboundTransition.setNeighboringLegs(leg, nextLeg);
+                outboundTransition.recomputeWithParameters(
+                    activeLegIdx === index + 1,
+                    predictedLegTas,
+                    predictedLegGs,
+                    ppos,
+                    trueTrack,
+                );
+            }
+        }
+
+        // Since the outbound transition can have TAD, we recompute the leg again to make sure the end point is at the right place for this cycle
+        if (!prevLeg || !prevLeg.isNull) {
+            leg.setNeighboringGuidables(inboundTransition ?? prevLeg, outboundTransition ?? nextLeg);
+            leg.recomputeWithParameters(
+                activeLegIdx === index,
+                predictedLegTas,
+                predictedLegGs,
+                ppos,
+                trueTrack,
+            );
+        }
+    }
+
+    static getLegPredictedTas(leg: Leg) {
+        return leg?.predictedTas;
+    }
+
+    static getLegPredictedGs(leg: Leg) {
+        return leg?.predictedGs;
     }
 
     /**
@@ -185,9 +269,12 @@ export class Geometry {
      * @param gs
      * @param tas
      */
-    getGuidanceParameters(activeLegIdx: number, ppos: Coordinates, trueTrack: DegreesTrue, gs: Knots, tas: Knots) {
+    getGuidanceParameters(activeLegIdx: number, ppos: Coordinates, trueTrack: DegreesTrue, gs: Knots, tas: Knots): CompletedGuidanceParameters | undefined {
         const activeLeg = this.legs.get(activeLegIdx);
         const nextLeg = this.legs.get(activeLegIdx + 1);
+
+        // TODO handle in guidance controller state
+        const autoSequencing = !activeLeg?.disableAutomaticSequencing;
 
         let activeGuidable: Guidable | null = null;
         let nextGuidable: Guidable | null = null;
@@ -208,7 +295,8 @@ export class Geometry {
                 activeGuidable = fromTransition;
                 nextGuidable = activeLeg;
             }
-        } else if (toTransition && !toTransition.isNull) {
+        } else if (toTransition && !toTransition.isNull && autoSequencing) {
+            // TODO need to check that the previous leg is actually flown first...
             if (toTransition.isAbeam(ppos)) {
                 if (toTransition instanceof FixedRadiusTransition && !toTransition.isFrozen) {
                     toTransition.freeze();
@@ -222,23 +310,27 @@ export class Geometry {
             }
         } else if (activeLeg) {
             activeGuidable = activeLeg;
-            if (nextLeg) {
+            if (nextLeg && autoSequencing) {
                 nextGuidable = nextLeg;
             }
         }
 
         // figure out guidance params and roll anticipation
-        let guidanceParams: GuidanceParameters;
+        let guidanceParams: CompletedGuidanceParameters;
         let rad;
         let dtg;
         if (activeGuidable) {
-            guidanceParams = activeGuidable.getGuidanceParameters(ppos, trueTrack, tas);
+            const phiLimit = maxBank(tas, isGuidableCapturingPath(activeGuidable));
+            guidanceParams = {
+                ...activeGuidable.getGuidanceParameters(ppos, trueTrack, tas, gs),
+                phiLimit,
+            };
             dtg = activeGuidable.getDistanceToGo(ppos);
 
             if (activeGuidable && nextGuidable) {
                 rad = this.getGuidableRollAnticipationDistance(gs, activeGuidable, nextGuidable);
                 if (rad > 0 && dtg <= rad) {
-                    const nextGuidanceParams = nextGuidable.getGuidanceParameters(ppos, trueTrack, tas);
+                    const nextGuidanceParams = nextGuidable.getGuidanceParameters(ppos, trueTrack, tas, gs);
 
                     if (nextGuidanceParams.law === ControlLaw.LATERAL_PATH) {
                         (guidanceParams as LateralPathGuidance).phiCommand = nextGuidanceParams?.phiCommand ?? 0;
@@ -298,8 +390,8 @@ export class Geometry {
         return rad;
     }
 
-    getDistanceToGo(ppos): number | null {
-        const activeLeg = this.legs.get(1);
+    getDistanceToGo(activeLegIdx: number, ppos: LatLongAlt): number | null {
+        const activeLeg = this.legs.get(activeLegIdx);
         if (activeLeg) {
             return activeLeg.getDistanceToGo(ppos);
         }
@@ -310,30 +402,16 @@ export class Geometry {
     shouldSequenceLeg(activeLegIdx: number, ppos: LatLongAlt): boolean {
         const activeLeg = this.legs.get(activeLegIdx);
         const inboundTransition = this.transitions.get(activeLegIdx - 1);
-        const outboundTransition = this.transitions.get(activeLegIdx);
 
         // Restrict sequencing in cases where we are still in inbound transition. Make an exception for very short legs as the transition could be overshooting.
         if (!inboundTransition?.isNull && inboundTransition?.isAbeam(ppos) && activeLeg.distance > 0.01) {
             return false;
         }
 
-        if (activeLeg instanceof TFLeg && outboundTransition instanceof FixedRadiusTransition && !outboundTransition.isReverted) {
-            // Sequence at ITP
-            const [transItp] = outboundTransition.getTurningPoints();
+        const dtg = activeLeg.getDistanceToGo(ppos);
 
-            const legBearing = activeLeg.outboundCourse;
-            const bearingToTransItp = Avionics.Utils.computeGreatCircleHeading(ppos, transItp);
-            const innerAngleWithTransItp = MathUtils.smallCrossingAngle(legBearing, bearingToTransItp);
-
-            const directedDtgToTransItp = GeoMath.directedDistanceToGo(ppos, transItp, innerAngleWithTransItp);
-
-            return directedDtgToTransItp < 0;
-        } if (outboundTransition instanceof CourseCaptureTransition || outboundTransition instanceof DirectToFixTransition) {
-            const dtg = activeLeg.getDistanceToGo(ppos);
-
-            if (dtg <= 0) {
-                return true;
-            }
+        if (dtg <= 0 || activeLeg.isNull) {
+            return true;
         }
 
         if (activeLeg) {

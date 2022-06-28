@@ -11,6 +11,7 @@ import {
     FrequencyType,
     LegType,
     NdbType,
+    RnavTypeFlags,
     RouteType,
     RunwayDesignatorChar,
     RunwayLighting,
@@ -54,13 +55,16 @@ declare global {
 
         instrument: BaseInstrument;
 
+        /**
+         * These are the default MS types but for some reason we changed
         altDesc: number;
 
         altitude1: number;
 
         altitude2: number;
+        */
 
-        legAltitudeDescription: number;
+        legAltitudeDescription: AltitudeDescriptor;
 
         legAltitude1: number;
 
@@ -77,6 +81,8 @@ declare global {
         verticalAngle?: number;
 
         _svgElements: any;
+
+        static formatIdentFromIcao(icao: string): string;
     }
 
     class WayPointInfo {
@@ -140,11 +146,13 @@ declare global {
 
     interface OneWayRunway {
         designation: string;
+        designator: RunwayDesignatorChar;
         direction: number;
         beginningCoordinates: LatLongAlt;
         endCoordinates: LatLongAlt;
         elevation: number;
         length: number;
+        number: number;
         slope: number;
         thresholdCoordinates: LatLongAlt;
         thresholdLength: number;
@@ -192,14 +200,19 @@ declare global {
     }
 
     interface RawApproach {
+        approachSuffix: string;
+        approachType: ApproachType;
         finalLegs: RawProcedureLeg[];
         // unknown/empty
         icaos: Array<string>;
         missedLegs: RawProcedureLeg[];
         // "(VOR|ILS|LOC|RNAV|...) [0-9]{2} ([A-Z])?"
         name: string;
+        rnavTypeFlags: RnavTypeFlags;
         // 3 digits [0-9]{2}[LCR]
         runway: string;
+        runwayDesignator: RunwayDesignatorChar;
+        runwayNumber: number;
         transitions: RawApproachTransition[];
         __Type: 'JS_Approach';
     }

@@ -20,20 +20,21 @@ class CDUNavRadioPage {
         let vor2CourseCell = "";
         let adf2FrequencyCell = "";
         let adf2BfoOption = "";
-        CDUNavRadioPage._timer = 0;
-        mcdu.pageUpdate = () => {
-            CDUNavRadioPage._timer++;
-            if (CDUNavRadioPage._timer >= 5) {
+
+        // regular update while boarding/de-boarding is running
+        mcdu.page.SelfPtr = setTimeout(() => {
+            if (mcdu.page.Current === mcdu.page.NavRadioPage) {
                 CDUNavRadioPage.ShowPage(mcdu);
             }
-        };
+        }, mcdu.PageTimeout.Default);
+
         if (!radioOn) {
             vor1FrequencyCell = "[\xa0]/[\xa0\xa0.\xa0]";
             const vor1Beacon = mcdu.radioNav.getVORBeacon(1);
             const vor1Ident = vor1Beacon && vor1Beacon.ident.length >= 2 && vor1Beacon.ident.length <= 3 ? vor1Beacon.ident : "";
-            if (mcdu.vor1Frequency != 0 && !mcdu.vor1IdIsPilotEntered && mcdu.vor1FreqIsPilotEntered) {
+            if (mcdu.vor1Frequency && !mcdu.vor1IdIsPilotEntered && mcdu.vor1FreqIsPilotEntered) {
                 vor1FrequencyCell = "{small}" + vor1Ident.padStart(3, "\xa0") + "{end}" + "/" + mcdu.vor1Frequency.toFixed(2);
-            } else if (mcdu.vor1Frequency != 0 && mcdu.vor1IdIsPilotEntered && !mcdu.vor1FreqIsPilotEntered) {
+            } else if (mcdu.vor1Frequency && mcdu.vor1IdIsPilotEntered && !mcdu.vor1FreqIsPilotEntered) {
                 vor1FrequencyCell = mcdu.vor1IdPilotValue.padStart(3, "\xa0") + "/" + "{small}" + mcdu.vor1Frequency.toFixed(2) + "{end}";
             }
             mcdu.onLeftInput[0] = (value, scratchpadCallback) => {
@@ -382,4 +383,3 @@ class CDUNavRadioPage {
         ]);
     }
 }
-CDUNavRadioPage._timer = 0;

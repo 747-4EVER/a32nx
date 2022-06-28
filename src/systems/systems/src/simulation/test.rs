@@ -24,7 +24,9 @@ use super::{
 use crate::landing_gear::LandingGear;
 use crate::shared::arinc429::{from_arinc429, to_arinc429, Arinc429Word, SignStatus};
 use crate::simulation::update_context::Delta;
-use crate::simulation::{DeltaContext, InitContext, VariableIdentifier, VariableRegistry};
+use crate::simulation::{
+    DeltaContext, InitContext, StartState, VariableIdentifier, VariableRegistry,
+};
 
 pub trait TestBed {
     type Aircraft: Aircraft;
@@ -46,6 +48,10 @@ pub trait TestBed {
 
     fn fail(&mut self, failure_type: FailureType) {
         self.test_bed_mut().fail(failure_type);
+    }
+
+    fn unfail(&mut self, failure_type: FailureType) {
+        self.test_bed_mut().unfail(failure_type);
     }
 
     fn command<V: FnOnce(&mut Self::Aircraft)>(&mut self, func: V) {
@@ -74,6 +80,18 @@ pub trait TestBed {
 
     fn indicated_airspeed(&mut self) -> Velocity {
         self.test_bed_mut().indicated_airspeed()
+    }
+
+    fn set_long_acc(&mut self, acc: Acceleration) {
+        self.test_bed_mut().set_long_acceleration(acc);
+    }
+
+    fn set_lat_acc(&mut self, acc: Acceleration) {
+        self.test_bed_mut().set_lat_acceleration(acc);
+    }
+
+    fn set_norm_acc(&mut self, acc: Acceleration) {
+        self.test_bed_mut().set_normal_acceleration(acc);
     }
 
     fn set_indicated_altitude(&mut self, indicated_altitude: Length) {
@@ -201,10 +219,17 @@ pub struct SimulationTestBed<T: Aircraft> {
 }
 impl<T: Aircraft> SimulationTestBed<T> {
     pub fn new<U: FnOnce(&mut InitContext) -> T>(aircraft_ctor_fn: U) -> Self {
+        Self::new_with_start_state(Default::default(), aircraft_ctor_fn)
+    }
+
+    pub fn new_with_start_state<U: FnOnce(&mut InitContext) -> T>(
+        start_state: StartState,
+        aircraft_ctor_fn: U,
+    ) -> Self {
         let mut variable_registry = TestVariableRegistry::default();
         let mut test_bed = Self {
             reader_writer: TestReaderWriter::new(),
-            simulation: Simulation::new(aircraft_ctor_fn, &mut variable_registry),
+            simulation: Simulation::new(start_state, aircraft_ctor_fn, &mut variable_registry),
             variable_registry,
         };
 
@@ -271,6 +296,10 @@ impl<T: Aircraft> SimulationTestBed<T> {
 
     fn fail(&mut self, failure_type: FailureType) {
         self.simulation.activate_failure(failure_type);
+    }
+
+    fn unfail(&mut self, failure_type: FailureType) {
+        self.simulation.deactivate_failure(failure_type);
     }
 
     fn aircraft(&self) -> &T {
@@ -350,6 +379,20 @@ impl<T: Aircraft> SimulationTestBed<T> {
     pub fn set_long_acceleration(&mut self, accel: Acceleration) {
         self.write_by_name(
             UpdateContext::ACCEL_BODY_Z_KEY,
+            accel.get::<foot_per_second_squared>(),
+        );
+    }
+
+    pub fn set_lat_acceleration(&mut self, accel: Acceleration) {
+        self.write_by_name(
+            UpdateContext::ACCEL_BODY_X_KEY,
+            accel.get::<foot_per_second_squared>(),
+        );
+    }
+
+    pub fn set_normal_acceleration(&mut self, accel: Acceleration) {
+        self.write_by_name(
+            UpdateContext::ACCEL_BODY_Y_KEY,
             accel.get::<foot_per_second_squared>(),
         );
     }

@@ -100,10 +100,10 @@ class CDULateralRevisionPage {
             };
             mcdu.onLeftInput[2] = () => {
                 const nextLeg = mcdu.flightPlanManager.getWaypoint(waypointIndexFP + 1);
-                if (nextLeg && nextLeg.additionalData.legType === 14 /* HM */) {
-                    CDUHoldAtPage.ShowPage(mcdu, nextLeg, waypointIndexFP + 1);
+                if (nextLeg && nextLeg.additionalData.legType >= 12 && nextLeg.additionalData.legType <= 14 /* HA, HF, HM */) {
+                    CDUHoldAtPage.ShowPage(mcdu, waypointIndexFP + 1);
                 } else {
-                    CDUHoldAtPage.ShowPage(mcdu, waypoint, waypointIndexFP);
+                    CDUHoldAtPage.ShowPage(mcdu, waypointIndexFP);
                 }
             };
         }
@@ -138,7 +138,7 @@ class CDULateralRevisionPage {
                 return mcdu.getDelaySwitchPage();
             };
             mcdu.onRightInput[4] = () => {
-                A320_Neo_CDU_AirwaysFromWaypointPage.ShowPage(mcdu, waypoint);
+                A320_Neo_CDU_AirwaysFromWaypointPage.ShowPage(mcdu, waypointIndexFP);
             };
         }
 

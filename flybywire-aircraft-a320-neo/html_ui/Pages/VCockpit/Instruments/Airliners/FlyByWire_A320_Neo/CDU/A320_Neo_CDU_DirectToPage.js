@@ -51,6 +51,12 @@ class CDUDirectToPage {
         // TODO enable automatic sequencing
         // TODO engage NAV mode
         mcdu.onLeftInput[0] = (value) => {
+            if (value === FMCMainDisplay.clrValue) {
+                SimVar.SetSimVarValue("L:A320_NEO_PREVIEW_DIRECT_TO", "number", 0);
+                CDUDirectToPage.ShowPage(mcdu, undefined, wptsListIndex);
+                return;
+            }
+
             mcdu.getOrSelectWaypointByIdent(value, (w) => {
                 if (w) {
                     SimVar.SetSimVarValue("L:A320_NEO_PREVIEW_DIRECT_TO", "number", 1);
@@ -61,6 +67,15 @@ class CDUDirectToPage {
                     CDUDirectToPage.ShowPage(mcdu, w, wptsListIndex);
                 }
             });
+        };
+        mcdu.onRightInput[2] = () => {
+            mcdu.addNewMessage(NXFictionalMessages.notYetImplemented);
+        };
+        mcdu.onRightInput[3] = () => {
+            mcdu.addNewMessage(NXFictionalMessages.notYetImplemented);
+        };
+        mcdu.onRightInput[4] = () => {
+            mcdu.addNewMessage(NXFictionalMessages.notYetImplemented);
         };
         let i = 0;
         let cellIter = 0;

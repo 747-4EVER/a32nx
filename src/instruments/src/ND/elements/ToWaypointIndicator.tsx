@@ -1,8 +1,8 @@
-import React, { FC, memo, useState } from 'react';
+import React, { FC, memo, useEffect, useState } from 'react';
 import { Layer } from '@instruments/common/utils';
-import { useCoherentEvent } from '@instruments/common/hooks';
 import { EfisSide } from '@shared/NavigationDisplay';
 import { useSimVar } from '@instruments/common/simVars';
+import { SimVarString } from '@shared/simvar';
 
 export type ToWaypointIndicatorProps = {
     side: EfisSide,
@@ -12,14 +12,16 @@ export const ToWaypointIndicator: FC<ToWaypointIndicatorProps> = memo(({ side })
     // TODO replace with appropriate ARINC 429 labels
 
     const [ident, setIdent] = useState<string | null>(null);
+    const [ident0] = useSimVar(`L:A32NX_EFIS_${side}_TO_WPT_IDENT_0`, 'number', 500);
+    const [ident1] = useSimVar(`L:A32NX_EFIS_${side}_TO_WPT_IDENT_1`, 'number', 500);
     const [bearing] = useSimVar(`L:A32NX_EFIS_${side}_TO_WPT_BEARING`, 'Degrees');
     const [distance] = useSimVar(`L:A32NX_EFIS_${side}_TO_WPT_DISTANCE`, 'Number');
     const [eta] = useSimVar(`L:A32NX_EFIS_${side}_TO_WPT_ETA`, 'Seconds');
 
-    useCoherentEvent(`A32NX_EFIS_${side}_TO_WPT_IDENT`, (ident: string) => {
+    useEffect(() => {
         // EIS2 can only display 9 characters for the ident
-        setIdent(ident.substring(0, 8));
-    });
+        setIdent(SimVarString.unpack([ident0, ident1]));
+    }, [ident0, ident1]);
 
     let distanceFixed;
     let distanceIntegralPart;
@@ -51,14 +53,14 @@ export const ToWaypointIndicator: FC<ToWaypointIndicatorProps> = memo(({ side })
                 <text x={-9} y={0} fontSize={25} className="White" textAnchor="end">{ident}</text>
             )}
 
-            {bearing && Number.isFinite(bearing) && (
+            {bearing && bearing !== -1 && Number.isFinite(bearing) && (
                 <>
                     <text x={54} y={0} fontSize={25} className="Green" textAnchor="end">{(Math.round(bearing)).toString().padStart(3, '0')}</text>
                     <text x={73} y={2} fontSize={25} className="Cyan" textAnchor="end">&deg;</text>
                 </>
             )}
 
-            {distance && Number.isFinite(distance) && (
+            {distance && distance !== -1 && Number.isFinite(distance) && (
                 <>
                     {distance < 20 ? (
                         <>
@@ -76,7 +78,7 @@ export const ToWaypointIndicator: FC<ToWaypointIndicatorProps> = memo(({ side })
                 </>
             )}
 
-            {utc && (
+            {eta !== -1 && utc && (
                 <text x={72} y={62} fontSize={25} className="Green" textAnchor="end">{utc}</text>
             )}
         </Layer>

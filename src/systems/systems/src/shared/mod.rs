@@ -1,6 +1,6 @@
 use crate::{
     electrical::{ElectricalElement, ElectricitySource, Potential},
-    pneumatic::{EngineState, PneumaticValveSignal},
+    pneumatic::{EngineModeSelector, EngineState, PneumaticValveSignal},
     simulation::UpdateContext,
 };
 
@@ -123,6 +123,7 @@ pub trait PneumaticBleed {
 pub trait EngineStartState {
     fn left_engine_state(&self) -> EngineState;
     fn right_engine_state(&self) -> EngineState;
+    fn engine_mode_selector(&self) -> EngineModeSelector;
 }
 
 pub trait EngineBleedPushbutton {
@@ -132,6 +133,12 @@ pub trait EngineBleedPushbutton {
 
 pub trait GroundSpeed {
     fn ground_speed(&self) -> Velocity;
+}
+
+pub trait SectionPressure {
+    fn pressure(&self) -> Pressure;
+    fn pressure_downstream_leak_valve(&self) -> Pressure;
+    fn is_pressure_switch_pressurised(&self) -> bool;
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]

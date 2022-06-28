@@ -7,16 +7,14 @@ module.exports = {
         '@flybywiresim/eslint-config',
         'plugin:jest/recommended',
         'plugin:jest/style',
+        'plugin:tailwindcss/recommended',
     ],
-    plugins: ['@typescript-eslint'],
+    plugins: [
+        '@typescript-eslint',
+        'tailwindcss',
+    ],
     parser: '@typescript-eslint/parser',
     ignorePatterns: [
-        '/flybywire-aircraft-a320-neo/html_ui/JS/fmgc/**',
-        '/flybywire-aircraft-a320-neo/html_ui/Pages/VCockpit/Instruments/A32NX/**',
-        'typings/**',
-        'PFDV2/node_modules/**',
-        'PFDV2/types/**',
-        'msfs-avionics-mirror/**',
         'mcdu-server/client/build/**',
     ],
     parserOptions: {
@@ -24,7 +22,10 @@ module.exports = {
         sourceType: 'script',
         requireConfigFile: false,
     },
-    settings: { 'import/resolver': { node: { extensions: ['.js', '.mjs', '.jsx', '.ts', '.tsx'] } } },
+    settings: {
+        'tailwindcss': { groupByResponsive: true },
+        'import/resolver': { node: { extensions: ['.js', '.mjs', '.jsx', '.ts', '.tsx'] } },
+    },
     overrides: [
         {
             files: ['*.jsx', '*.tsx'],
@@ -40,6 +41,7 @@ module.exports = {
     ],
     // overrides airbnb, use sparingly
     rules: {
+        'tailwindcss/no-custom-classname': 'off',
         'no-bitwise': 'off',
         'no-mixed-operators': 'off',
         'arrow-parens': ['error', 'always'],

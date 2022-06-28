@@ -8,6 +8,7 @@
 #include "AutopilotLaws.h"
 #include "AutopilotStateMachine.h"
 #include "Autothrust.h"
+#include "CalculatedRadioReceiver.h"
 #include "ElevatorTrimHandler.h"
 #include "EngineData.h"
 #include "FlightDataRecorder.h"
@@ -47,8 +48,6 @@ class FlyByWireInterface {
   double targetSimulationRate = 1;
   bool targetSimulationRateModified = false;
 
-  bool customFlightGuidanceEnabled = false;
-  bool gpsCourseToSteerEnabled = false;
   bool autopilotStateMachineEnabled = false;
   bool autopilotLawsEnabled = false;
   bool flyByWireEnabled = false;
@@ -69,10 +68,6 @@ class FlyByWireInterface {
 
   bool autolandWarningLatch = false;
   bool autolandWarningTriggered = false;
-
-  double flightGuidanceCrossTrackError = 0.0;
-  double flightGuidanceTrackAngleError = 0.0;
-  double flightGuidancePhiPreCommand = 0.0;
 
   double flightControlsKeyChangeAileron = 0.0;
   double flightControlsKeyChangeElevator = 0.0;
@@ -104,10 +99,11 @@ class FlyByWireInterface {
 
   InterpolatingLookupTable throttleLookupTable;
 
+  RadioReceiver radioReceiver;
+
   bool developmentLocalVariablesEnabled = false;
   bool useCalculatedLocalizerAndGlideSlope = false;
   std::unique_ptr<LocalVariable> idDevelopmentAutoland_condition_Flare;
-  std::unique_ptr<LocalVariable> idDevelopmentAutoland_H_dot_radio_fpm;
   std::unique_ptr<LocalVariable> idDevelopmentAutoland_H_dot_c_fpm;
   std::unique_ptr<LocalVariable> idDevelopmentAutoland_delta_Theta_H_dot_deg;
   std::unique_ptr<LocalVariable> idDevelopmentAutoland_delta_Theta_bz_deg;
@@ -167,6 +163,8 @@ class FlyByWireInterface {
   std::unique_ptr<LocalVariable> idAutopilotActive_2;
 
   std::unique_ptr<LocalVariable> idAutopilotAutothrustMode;
+
+  std::unique_ptr<LocalVariable> idAutopilot_H_dot_radio;
 
   std::unique_ptr<LocalVariable> idFcuTrkFpaModeActive;
   std::unique_ptr<LocalVariable> idFcuSelectedFpa;
@@ -305,6 +303,8 @@ class FlyByWireInterface {
   std::unique_ptr<LocalVariable> idSpoilersHandlePosition;
   std::unique_ptr<LocalVariable> idSpoilersGroundSpoilersActive;
   std::shared_ptr<SpoilersHandler> spoilersHandler;
+  std::unique_ptr<LocalVariable> idSpoilersPositionLeft;
+  std::unique_ptr<LocalVariable> idSpoilersPositionRight;
 
   std::shared_ptr<ElevatorTrimHandler> elevatorTrimHandler;
   std::shared_ptr<RudderTrimHandler> rudderTrimHandler;
@@ -313,6 +313,7 @@ class FlyByWireInterface {
   std::unique_ptr<LocalVariable> idAileronPositionRight;
   std::shared_ptr<AnimationAileronHandler> animationAileronHandler;
 
+  std::unique_ptr<LocalVariable> idRadioReceiverUsageEnabled;
   std::unique_ptr<LocalVariable> idRadioReceiverLocalizerValid;
   std::unique_ptr<LocalVariable> idRadioReceiverLocalizerDeviation;
   std::unique_ptr<LocalVariable> idRadioReceiverLocalizerDistance;
@@ -327,6 +328,8 @@ class FlyByWireInterface {
   bool updatePerformanceMonitoring(double sampleTime);
   bool handleSimulationRate(double sampleTime);
 
+  bool updateRadioReceiver(double sampleTime);
+
   bool updateEngineData(double sampleTime);
   bool updateAdditionalData(double sampleTime);
 
@@ -338,8 +341,6 @@ class FlyByWireInterface {
   bool updateSpoilers(double sampleTime);
 
   bool updateAltimeterSetting(double sampleTime);
-
-  double getHeadingAngleError(double u1, double u2);
 
   double getTcasModeAvailable();
 

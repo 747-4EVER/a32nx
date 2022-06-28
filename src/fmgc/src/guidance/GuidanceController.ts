@@ -1,8 +1,10 @@
-//  Copyright (c) 2021 FlyByWire Simulations
-//  SPDX-License-Identifier: GPL-3.0
+// Copyright (c) 2021-2022 FlyByWire Simulations
+// Copyright (c) 2021-2022 Synaptic Simulations
+//
+// SPDX-License-Identifier: GPL-3.0
 
 import { Geometry } from '@fmgc/guidance/Geometry';
-import { PseudoWaypoint } from '@fmgc/guidance/PsuedoWaypoint';
+import { PseudoWaypoint } from '@fmgc/guidance/PseudoWaypoint';
 import { PseudoWaypoints } from '@fmgc/guidance/lnav/PseudoWaypoints';
 import { EfisVectors } from '@fmgc/efis/EfisVectors';
 import { Coordinates } from '@fmgc/flightplanning/data/geo';
@@ -10,6 +12,17 @@ import { EfisState } from '@fmgc/guidance/FmsState';
 import { EfisSide, Mode, rangeSettings } from '@shared/NavigationDisplay';
 import { TaskCategory, TaskQueue } from '@fmgc/guidance/TaskQueue';
 import { HMLeg } from '@fmgc/guidance/lnav/legs/HX';
+import { LnavConfig } from '@fmgc/guidance/LnavConfig';
+import { SimVarString } from '@shared/simvar';
+import { getFlightPhaseManager } from '@fmgc/flightphase';
+import { FmgcFlightPhase } from '@shared/flightphase';
+import { normaliseApproachName } from '@shared/flightplan';
+import { VerticalProfileComputationParametersObserver } from '@fmgc/guidance/vnav/VerticalProfileComputationParameters';
+import { SpeedLimit } from '@fmgc/guidance/vnav/SpeedLimit';
+import { FlapConf } from '@fmgc/guidance/vnav/common';
+import { WindProfileFactory } from '@fmgc/guidance/vnav/wind/WindProfileFactory';
+import { FmcWinds, FmcWindVector } from '@fmgc/guidance/vnav/wind/types';
+import { AtmosphericConditions } from '@fmgc/guidance/vnav/AtmosphericConditions';
 import { LnavDriver } from './lnav/LnavDriver';
 import { FlightPlanManager, FlightPlans } from '../flightplanning/FlightPlanManager';
 import { GuidanceManager } from './GuidanceManager';
@@ -17,6 +30,34 @@ import { VnavDriver } from './vnav/VnavDriver';
 
 // How often the (milliseconds)
 const GEOMETRY_RECOMPUTATION_TIMER = 5_000;
+
+export interface Fmgc {
+    getZeroFuelWeight(): number;
+    getFOB(): number;
+    getV2Speed(): Knots;
+    getTropoPause(): Feet;
+    getManagedClimbSpeed(): Knots;
+    getManagedClimbSpeedMach(): Mach;
+    getAccelerationAltitude(): Feet,
+    getThrustReductionAltitude(): Feet,
+    getCruiseAltitude(): Feet,
+    getFlightPhase(): FmgcFlightPhase,
+    getManagedCruiseSpeed(): Knots,
+    getManagedCruiseSpeedMach(): Mach,
+    getClimbSpeedLimit(): SpeedLimit,
+    getDescentSpeedLimit(): SpeedLimit,
+    getPreSelectedClbSpeed(): Knots,
+    getTakeoffFlapsSetting(): FlapConf | undefined
+    getManagedDescentSpeed(): Knots,
+    getManagedDescentSpeedMach(): Mach,
+    getApproachSpeed(): Knots,
+    getFlapRetractionSpeed(): Knots,
+    getSlatRetractionSpeed(): Knots,
+    getCleanSpeed(): Knots,
+    getTripWind(): number,
+    getWinds(): FmcWinds,
+    getApproachWind(): FmcWindVector,
+}
 
 export class GuidanceController {
     flightPlanManager: FlightPlanManager;
@@ -57,9 +98,17 @@ export class GuidanceController {
 
     efisStateForSide: { L: EfisState, R: EfisState }
 
+    private approachMessage: string = ''
+
     taskQueue = new TaskQueue();
 
-    private listener = RegisterViewListener('JS_LISTENER_SIMVARS');
+    verticalProfileComputationParametersObserver: VerticalProfileComputationParametersObserver;
+
+    private listener = RegisterViewListener('JS_LISTENER_SIMVARS', null, true);
+
+    private windProfileFactory: WindProfileFactory;
+
+    private atmosphericConditions: AtmosphericConditions;
 
     get hasTemporaryFlightPlan() {
         // eslint-disable-next-line no-underscore-dangle
@@ -77,6 +126,8 @@ export class GuidanceController {
 
         state.mode = ndMode;
         state.range = ndRange;
+
+        this.updateEfisApproachMessage();
     }
 
     private lastFocusedWpIndex = -1;
@@ -119,19 +170,49 @@ export class GuidanceController {
     private updateEfisIdent() {
         // Update EFIS ident
 
-        const efisIdent = this.activeGeometry.legs.get(this.activeLegIndex)?.ident;
+        const efisIdent = this.activeGeometry.legs.get(this.activeLegIndex)?.ident ?? 'PPOS';
 
-        this.listener.triggerToAllSubscribers('A32NX_EFIS_L_TO_WPT_IDENT', efisIdent ?? '');
-        this.listener.triggerToAllSubscribers('A32NX_EFIS_R_TO_WPT_IDENT', efisIdent ?? '');
+        const efisVars = SimVarString.pack(efisIdent, 9);
+        // setting the simvar as a number greater than about 16 million causes precision error > 1... but this works..
+        SimVar.SetSimVarValue('L:A32NX_EFIS_L_TO_WPT_IDENT_0', 'string', efisVars[0].toString());
+        SimVar.SetSimVarValue('L:A32NX_EFIS_L_TO_WPT_IDENT_1', 'string', efisVars[1].toString());
+        SimVar.SetSimVarValue('L:A32NX_EFIS_R_TO_WPT_IDENT_0', 'string', efisVars[0].toString());
+        SimVar.SetSimVarValue('L:A32NX_EFIS_R_TO_WPT_IDENT_1', 'string', efisVars[1].toString());
     }
 
-    constructor(flightPlanManager: FlightPlanManager, guidanceManager: GuidanceManager) {
+    private updateEfisApproachMessage() {
+        let apprMsg = '';
+        const appr = this.flightPlanManager.getApproach(FlightPlans.Active);
+        if (appr && appr.approachType !== ApproachType.APPROACH_TYPE_UNKNOWN) {
+            const phase = getFlightPhaseManager().phase;
+            if (phase > FmgcFlightPhase.Cruise || (phase === FmgcFlightPhase.Cruise && this.flightPlanManager.getDistanceToDestination(FlightPlans.Active) < 250)) {
+                apprMsg = normaliseApproachName(appr.name);
+            }
+        }
+
+        if (apprMsg !== this.approachMessage) {
+            this.approachMessage = apprMsg;
+            const apprMsgVars = SimVarString.pack(apprMsg, 9);
+            // setting the simvar as a number greater than about 16 million causes precision error > 1... but this works..
+            SimVar.SetSimVarValue('L:A32NX_EFIS_L_APPR_MSG_0', 'string', apprMsgVars[0].toString());
+            SimVar.SetSimVarValue('L:A32NX_EFIS_L_APPR_MSG_1', 'string', apprMsgVars[1].toString());
+            SimVar.SetSimVarValue('L:A32NX_EFIS_R_APPR_MSG_0', 'string', apprMsgVars[0].toString());
+            SimVar.SetSimVarValue('L:A32NX_EFIS_R_APPR_MSG_1', 'string', apprMsgVars[1].toString());
+        }
+    }
+
+    constructor(flightPlanManager: FlightPlanManager, guidanceManager: GuidanceManager, fmgc: Fmgc) {
         this.flightPlanManager = flightPlanManager;
         this.guidanceManager = guidanceManager;
 
+        this.verticalProfileComputationParametersObserver = new VerticalProfileComputationParametersObserver(fmgc);
+        this.windProfileFactory = new WindProfileFactory(this.verticalProfileComputationParametersObserver, fmgc, 1);
+
+        this.atmosphericConditions = new AtmosphericConditions(this.verticalProfileComputationParametersObserver);
+
         this.lnavDriver = new LnavDriver(this);
-        this.vnavDriver = new VnavDriver(this);
-        this.pseudoWaypoints = new PseudoWaypoints(this);
+        this.vnavDriver = new VnavDriver(this, this.verticalProfileComputationParametersObserver, this.atmosphericConditions, this.windProfileFactory, flightPlanManager);
+        this.pseudoWaypoints = new PseudoWaypoints(this, this.atmosphericConditions);
         this.efisVectors = new EfisVectors(this);
     }
 
@@ -186,39 +267,97 @@ export class GuidanceController {
         this.updateEfisState('R', this.rightEfisState);
 
         try {
-            // Generate new geometry when flight plan changes
-            const newFlightPlanVersion = this.flightPlanManager.currentFlightPlanVersion;
-            if (newFlightPlanVersion !== this.lastFlightPlanVersion) {
-                this.lastFlightPlanVersion = newFlightPlanVersion;
+            this.verticalProfileComputationParametersObserver.update();
+            this.windProfileFactory.updateFmgcInputs();
+        } catch (e) {
+            console.error('[FMS] Error during update of VNAV input parameters. See exception below.');
+            console.error(e);
+        }
 
+        // Generate new geometry when flight plan changes
+        // TODO also need to do it when FMS perf params change, e.g. speed limit/alt, climb/crz/des speeds
+        const newFlightPlanVersion = this.flightPlanManager.currentFlightPlanVersion;
+        if (newFlightPlanVersion !== this.lastFlightPlanVersion) {
+            this.lastFlightPlanVersion = newFlightPlanVersion;
+
+            try {
                 this.updateGeometries();
-                this.geometryRecomputationTimer = 0;
+            } catch (e) {
+                console.error('[FMS] Error during update of geometry. See exception below.');
+                console.error(e);
             }
+            this.geometryRecomputationTimer = 0;
+        }
 
-            if (this.geometryRecomputationTimer > GEOMETRY_RECOMPUTATION_TIMER) {
-                this.geometryRecomputationTimer = 0;
+        if (this.geometryRecomputationTimer > GEOMETRY_RECOMPUTATION_TIMER) {
+            this.geometryRecomputationTimer = 0;
 
+            try {
                 this.recomputeGeometries();
 
                 if (this.activeGeometry) {
-                    this.vnavDriver.acceptMultipleLegGeometry(this.activeGeometry);
-                    this.pseudoWaypoints.acceptMultipleLegGeometry(this.activeGeometry);
+                    try {
+                        this.vnavDriver.acceptMultipleLegGeometry(this.activeGeometry);
+                        this.pseudoWaypoints.acceptMultipleLegGeometry(this.activeGeometry);
+                    } catch (e) {
+                        console.error('[FMS] Error during active geometry recomputation. See exception below.');
+                        console.error(e);
+                    }
                 }
+            } catch (e) {
+                console.error('[FMS] Error during geometry recomputation. See exception below.');
+                console.error(e);
             }
+        }
 
+        this.atmosphericConditions.update();
+
+        try {
             this.updateMrpState();
+        } catch (e) {
+            console.error('[FMS] Error during map state computation. See exception below.');
+            console.error(e);
+        }
+
+        try {
             this.updateMapPartlyDisplayed();
+        } catch (e) {
+            console.error('[FMS] Error during map partly displayed computation. See exception below.');
+            console.error(e);
+        }
 
-            // Main loop
-
+        try {
             this.lnavDriver.update(deltaTime);
-            this.vnavDriver.update(deltaTime);
-            this.pseudoWaypoints.update(deltaTime);
-            this.efisVectors.update(deltaTime);
+        } catch (e) {
+            console.error('[FMS] Error during LNAV driver update. See exception below.');
+            console.error(e);
+        }
 
+        try {
+            this.vnavDriver.update(deltaTime);
+        } catch (e) {
+            console.error('[FMS] Error during VNAV driver update. See exception below.');
+            console.error(e);
+        }
+
+        try {
+            this.pseudoWaypoints.update(deltaTime);
+        } catch (e) {
+            console.error('[FMS] Error during pseudo waypoints update. See exception below.');
+            console.error(e);
+        }
+
+        try {
+            this.efisVectors.update(deltaTime);
+        } catch (e) {
+            console.error('[FMS] Error during EFIS vectors update. See exception below.');
+            console.error(e);
+        }
+
+        try {
             this.taskQueue.update(deltaTime);
         } catch (e) {
-            console.error('[FMS] Error during tick. See exception below.');
+            console.error('[FMS] Error during task queue update. See exception below.');
             console.error(e);
         }
     }
@@ -228,7 +367,10 @@ export class GuidanceController {
      */
     updateGeometries() {
         this.updateActiveGeometry();
-        this.updateTemporaryGeometry();
+
+        if (this.flightPlanManager.getFlightPlan(FlightPlans.Temporary)) {
+            this.updateTemporaryGeometry();
+        }
 
         this.recomputeGeometries();
 
@@ -262,8 +404,8 @@ export class GuidanceController {
     }
 
     recomputeGeometries() {
-        const tas = SimVar.GetSimVarValue('AIRSPEED TRUE', 'Knots');
-        const gs = SimVar.GetSimVarValue('GPS GROUND SPEED', 'Knots');
+        const tas = SimVar.GetSimVarValue(LnavConfig.DEBUG_USE_SPEED_LVARS ? 'L:A32NX_DEBUG_FM_TAS' : 'AIRSPEED TRUE', 'Knots');
+        const gs = SimVar.GetSimVarValue(LnavConfig.DEBUG_USE_SPEED_LVARS ? 'L:A32NX_DEBUG_FM_GS' : 'GPS GROUND SPEED', 'Knots');
         const trueTrack = SimVar.GetSimVarValue('GPS GROUND TRACK', 'degrees');
 
         if (this.activeGeometry) {
@@ -298,5 +440,38 @@ export class GuidanceController {
      */
     sequencePseudoWaypoint(pseudoWaypoint: PseudoWaypoint): void {
         this.pseudoWaypoints.sequencePseudoWaypoint(pseudoWaypoint);
+    }
+
+    isManualHoldActive(): boolean {
+        if (this.activeGeometry) {
+            const activeLeg = this.activeGeometry.legs.get(this.activeLegIndex);
+            return activeLeg instanceof HMLeg;
+        }
+        return false;
+    }
+
+    isManualHoldNext(): boolean {
+        if (this.activeGeometry) {
+            const nextLeg = this.activeGeometry.legs.get(this.activeLegIndex + 1);
+            return nextLeg instanceof HMLeg;
+        }
+        return false;
+    }
+
+    setHoldSpeed(tas: Knots) {
+        let holdLeg: HMLeg;
+        if (this.isManualHoldActive()) {
+            holdLeg = this.activeGeometry.legs.get(this.activeLegIndex) as HMLeg;
+        } else if (this.isManualHoldNext()) {
+            holdLeg = this.activeGeometry.legs.get(this.activeLegIndex + 1) as HMLeg;
+        }
+
+        if (holdLeg) {
+            holdLeg.setPredictedTas(tas);
+        }
+    }
+
+    getPresentPosition(): LatLongAlt {
+        return this.verticalProfileComputationParametersObserver.getPresentPosition();
     }
 }

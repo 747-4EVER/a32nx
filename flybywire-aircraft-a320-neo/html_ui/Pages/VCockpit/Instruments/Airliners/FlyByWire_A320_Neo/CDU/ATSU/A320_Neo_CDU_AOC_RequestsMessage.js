@@ -5,7 +5,7 @@ class CDUAocRequestsMessage {
         const lines = message.serialize(Atsu.AtsuMessageSerializationFormat.MCDU).split("\n");
 
         // mark message as read
-        mcdu.atsuManager.messageRead(message.UniqueMessageID);
+        mcdu.atsu.messageRead(message.UniqueMessageID);
 
         const msgArrows = messages.length > 1 ? " {}" : "";
 
@@ -46,8 +46,8 @@ class CDUAocRequestsMessage {
             [`{small}${lines[offset + 6] ? lines[offset + 6] : ""}{end}`],
             [`${lines[offset + 7] ? lines[offset + 7] : ""}`],
             [`{small}${lines[offset + 8] ? lines[offset + 8] : ""}{end}`],
-            ["RETURN TO"],
-            ["<RCVD MSGS", "PRINT*[color]cyan"]
+            ["\xa0RCVD MSGS"],
+            ["<RETURN", "PRINT*[color]cyan"]
         ]);
 
         mcdu.onNextPage = () => {
@@ -72,7 +72,7 @@ class CDUAocRequestsMessage {
         };
 
         mcdu.onRightInput[5] = () => {
-            mcdu.atsuManager.printMessage(message);
+            mcdu.atsu.printMessage(message);
         };
 
     }

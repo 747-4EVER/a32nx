@@ -1,12 +1,12 @@
 import { FlightPlanManager } from './flightplanning/FlightPlanManager';
-import { FlightPhaseManager } from './flightphase/FlightPhaseManager';
+import { getFlightPhaseManager } from './flightphase';
 import { FlightPlanAsoboSync } from './flightplanning/FlightPlanAsoboSync';
 import { GuidanceManager } from './guidance/GuidanceManager';
 import { ManagedFlightPlan } from './flightplanning/ManagedFlightPlan';
 import { GuidanceController } from './guidance/GuidanceController';
 import { NavRadioManager } from './radionav/NavRadioManager';
 import { EfisSymbols } from './efis/EfisSymbols';
-import { DescentBuilder } from './guidance/vnav/descent/DescentBuilder';
+import { DescentPathBuilder } from './guidance/vnav/descent/DescentPathBuilder';
 import { DecelPathBuilder } from './guidance/vnav/descent/DecelPathBuilder';
 import { VerticalFlightPlanBuilder } from './guidance/vnav/verticalFlightPlan/VerticalFlightPlanBuilder';
 import { initComponents, updateComponents, recallMessageById } from './components';
@@ -21,7 +21,7 @@ function updateFmgcLoop(deltaTime: number): void {
 }
 
 export {
-    FlightPhaseManager,
+    getFlightPhaseManager,
     FlightPlanManager,
     ManagedFlightPlan,
     FlightPlanAsoboSync,
@@ -32,7 +32,7 @@ export {
     updateFmgcLoop,
     recallMessageById,
     EfisSymbols,
-    DescentBuilder,
+    DescentPathBuilder,
     DecelPathBuilder,
     VerticalFlightPlanBuilder,
     WaypointBuilder,

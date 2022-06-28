@@ -1,11 +1,10 @@
 import { NXDataStore } from '@shared/persistence';
-import { setSimVar } from '../../util.js';
 
 type SimVar = [name: string, type: string, defaultValue: string];
 
 function syncSetting(simVar: SimVar, propertyName: string) {
     NXDataStore.getAndSubscribe(propertyName, (prop, value) => {
-        setSimVar(simVar[0], parseInt(value), simVar[1]).catch((e) => console.log(propertyName, e));
+        SimVar.SetSimVarValue(simVar[0], simVar[1], parseInt(value)).catch((e) => console.log(propertyName, e));
     }, simVar[2]);
 }
 
@@ -22,6 +21,10 @@ const settingsToSync: Map<string, SimVar> = new Map([
     ['ISIS_BARO_UNIT_INHG', ['L:A32NX_ISIS_BARO_UNIT_INHG', 'number', '0']],
     ['REALISTIC_TILLER_ENABLED', ['L:A32NX_REALISTIC_TILLER_ENABLED', 'number', '0']],
     ['HOME_COCKPIT_ENABLED', ['L:A32NX_HOME_COCKPIT_ENABLED', 'number', '0']],
+    ['SOUND_PASSENGER_AMBIENCE_ENABLED', ['L:A32NX_SOUND_PASSENGER_AMBIENCE_ENABLED', 'number', '1']],
+    ['SOUND_ANNOUNCEMENTS_ENABLED', ['L:A32NX_SOUND_ANNOUNCEMENTS_ENABLED', 'number', '1']],
+    ['SOUND_BOARDING_MUSIC_ENABLED', ['L:A32NX_SOUND_BOARDING_MUSIC_ENABLED', 'number', '1']],
+    ['RADIO_RECEIVER_USAGE_ENABLED', ['L:A32NX_RADIO_RECEIVER_USAGE_ENABLED', 'number', '0']],
 ]);
 
 export function readSettingsFromPersistentStorage() {

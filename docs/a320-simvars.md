@@ -6,6 +6,7 @@
 1. [EIS Display System](#eis-display-system)
 1. [Fly-By-Wire System](#fly-by-wire-system)
 1. [ADIRS](#adirs)
+1. [Flight Management System](#flight-management-system)
 1. [Autopilot System](#autopilot-system)
 1. [Autothrust System](#autothrust-system)
 1. [Throttle Mapping System](#throttle-mapping-system)
@@ -14,8 +15,23 @@
 1. [Pneumatic](#pneumatic)
 1. [Landing Gear (ATA 32)](#landing-gear-ata-32)
 1. [ATC (ATA 34)](#atc-ata-34)
+1. [Radio Altimeter (ATA 34)](#ra-ata-34)
 
 ## Uncategorized
+
+- A32NX_START_STATE
+  - Enum
+  - Indicates the state in which MSFS started
+  - State | Value
+    --- | ---
+    Hangar | 1
+    Apron | 2
+    Taxi | 3
+    Runway | 4
+    Climb | 5
+    Cruise | 6
+    Approach | 7
+    Final | 8
 
 - A32NX_NO_SMOKING_MEMO
     - Boolean that determines whether the NO SMOKING memo should be visible on the upper ECAM
@@ -185,7 +201,7 @@
     - Bool
     - True if "BLUE PUMP OVRD" switch is off
 
-- A32NX_OVHD_HYD_LEAK_MEASUREMENT_G
+- A32NX_OVHD_HYD_LEAK_MEASUREMENT_G_PB_IS_AUTO
     - Bool
     - True if "HYD LEAK MEASUREMENT G" switch is on
 
@@ -193,7 +209,7 @@
     - Bool
     - True if "HYD LEAK MEASUREMENT G" switch lock is down
 
-- A32NX_OVHD_HYD_LEAK_MEASUREMENT_B
+- A32NX_OVHD_HYD_LEAK_MEASUREMENT_B_PB_IS_AUTO
     - Bool
     - True if "HYD LEAK MEASUREMENT B" switch is on
 
@@ -201,7 +217,7 @@
     - Bool
     - True if "HYD LEAK MEASUREMENT B" switch lock is down
 
-- A32NX_OVHD_HYD_LEAK_MEASUREMENT_Y
+- A32NX_OVHD_HYD_LEAK_MEASUREMENT_Y_PB_IS_AUTO
     - Bool
     - True if "HYD LEAK MEASUREMENT Y" switch is on
 
@@ -740,6 +756,14 @@
         - BLUE
         - YELLOW
 
+- A32NX_HYD_{loop_name}_SYSTEM_1_SECTION_PRESSURE_SWITCH
+    - Boolean
+    - Current pressure switch state in {loop_name} hydraulic circuit downstream of leak valve
+    - {loop_name}
+        - GREEN
+        - BLUE
+        - YELLOW
+
 - A32NX_HYD_{loop_name}_PUMP_1_SECTION_PRESSURE
     - Psi
     - Current pressure in the pump section of the {loop_name} hydraulic circuit
@@ -759,6 +783,14 @@
 - A32NX_HYD_{loop_name}_RESERVOIR_LEVEL_IS_LOW
     - Boolean
     - Low level switch of {loop_name} hydraulic circuit reservoir indicates low state
+    - {loop_name}
+        - GREEN
+        - BLUE
+        - YELLOW
+
+- A32NX_HYD_{loop_name}_RESERVOIR_AIR_PRESSURE_IS_LOW
+    - Boolean
+    - Low air pressure switch of {loop_name} hydraulic circuit reservoir indicates low state
     - {loop_name}
         - GREEN
         - BLUE
@@ -864,6 +896,10 @@
     - Revolutions per minute
     - Power Transfer Unit shaft rpm
 
+- A32NX_HYD_PTU_CONTINUOUS_MODE
+    - Bool
+    - Power Transfer Unit is rotating continuously
+
 - A32NX_OVHD_HYD_RAT_MAN_ON_IS_PRESSED
     - Bool
     - Deploys the RAT manually
@@ -924,6 +960,10 @@
         - 1: Autobrake in LOW
         - 2: Autobrake in MED
         - 3: Autobrake in MAX
+
+- A32NX_AUTOBRAKES_ACTIVE
+    - Bool
+    - Autobrakes are braking
 
 - A32NX_AUTOBRAKES_DECEL_LIGHT
     - Bool
@@ -1087,6 +1127,52 @@
       0 | inactive
       1 | active
 
+- A32NX_CHRONO_ELAPSED_TIME
+    - Number
+    - Clock instrument CHR display time elapsed
+      Value | Meaning
+      --- | ---
+      0 or greater | Seconds elapsed
+      -1 | Empty value
+
+- A32NX_CHRONO_ET_ELAPSED_TIME
+    - Number
+    - Clock instrument ET display time elapsed
+      Value | Meaning
+      --- | ---
+      0 or greater | Seconds elapsed
+      -1 | Empty value
+
+- A32NX_LOAD_LIGHTING_PRESET
+  - Number
+  - ID for preset
+  - When set to >0 the corresponding preset will be loaded if defined
+  - Will be reset to 0 after loading is done
+
+- A32NX_SAVE_LIGHTING_PRESET
+    - Number
+    - ID for preset
+    - When set to >0 the corresponding preset will be overwritten and saved to an ini file
+    - Will be reset to 0 after saving is done
+
+- A32NX_LOAD_AIRCRAFT_PRESET
+    - Number
+    - ID for preset (1..5)
+    - When set to >0 the corresponding preset will be loaded if defined
+    - Will be reset to 0 after loading is done
+    - When set to 0 during loading will stop and cancel the loading process
+    - Value | Meaning
+      ---   | ---
+          1 | Cold & Dark
+          2 | Turnaround
+          3 | Ready for Pushback
+          4 | Ready for Taxi
+          5 | Ready for Takeoff
+
+- A32NX_LOAD_AIRCRAFT_PRESET_PROGRESS
+  - Number (0.0..1.0)
+  - While loading a preset this will contain the percentage of the total progress of loading
+
 ## EIS Display System
 
 - A32NX_EFIS_{side}_NAVAID_{1|2}_MODE
@@ -1193,6 +1279,35 @@
 - A32NX_PFD_MSG_SET_HOLD_SPEED
     - Bool
     - Indicates if the SET HOLD SPEED message is shown on the PFD
+
+- A32NX_PFD_MSG_TD_REACHED
+    - Bool
+    - Indicates if the T/D REACHED message is shown on the PFD
+
+- A32NX_PFD_LINEAR_DEVIATION_ACTIVE
+    - Bool
+    - Indicates if the linear deviation is shown on the PFD
+
+- A32NX_PFD_TARGET_ALTITUDE
+    - Feet
+    - Indicates the current target altitude in the DES mode. This is an indicated altitude and not a pressure altitude
+    - This is used to compute a linear deviation
+
+- A32NX_PFD_VERTICAL_PROFILE_LATCHED
+    - Boolean
+    - Indicates whether to show the latch symbol on the PFD with the deviation indicator
+
+- L:A32NX_PFD_SHOW_SPEED_MARGINS
+    - Boolean
+    - Indicates whether speed margins are shown on the PFD in DES mode.
+
+- L:A32NX_PFD_UPPER_SPEED_MARGIN
+    - Knots
+    - Indicates the speed for the upper speed margin limit in DES mode
+
+- L:A32NX_PFD_LOWER_SPEED_MARGIN
+    - Knots
+    - Indicates the speed for the lower speed margin limit in DES mode
 
 - A32NX_ISIS_LS_ACTIVE
 	- Bool
@@ -1454,17 +1569,18 @@ In the variables below, {number} should be replaced with one item in the set: { 
 - A32NX_ADIRS_ADR_{number}_STATIC_AIR_TEMPERATURE
     - Arinc429Word<Celsius>
     - The static air temperature (SAT).
-      {number}: 1 or 3
 
 - A32NX_ADIRS_ADR_{number}_TOTAL_AIR_TEMPERATURE
     - Arinc429Word<Celsius>
     - The total air temperature (TAT).
-      {number}: 1 or 3
 
 - A32NX_ADIRS_ADR_{number}_INTERNATIONAL_STANDARD_ATMOSPHERE_DELTA
     - Arinc429Word<Celsius>
     - The delta (deviation) from international standard atmosphere temperature.
-      {number}: 1 or 3
+
+- A32NX_ADIRS_ADR_{number}_ANGLE_OF_ATTACK
+    - Arinc429Word<Degrees>
+    - The angle of attack (α) of the aircraft
 
 - A32NX_ADIRS_IR_{number}_PITCH
     - Arinc429Word<Degrees>
@@ -1506,9 +1622,82 @@ In the variables below, {number} should be replaced with one item in the set: { 
     - Arinc429Word<Degrees>
     - The longitude of the aircraft.
 
+- A32NX_ADIRS_IR_{number}_DRIFT_ANGLE
+    - Arinc429Word<Degrees>
+    - The drift angle of the aircraft (drift angle = heading - track)
+
+- A32NX_ADIRS_IR_{number}_FLIGHT_PATH_ANGLE
+    - Arinc429Word<Degrees>
+    - The kinematic flight path angle (γ) (arctan(VS / GS))
+
+- A32NX_ADIRS_IR_{number}_BODY_PITCH_RATE
+    - Arinc429Word<Degrees per second>
+    - The body pitch rate (q) of the aircraft
+
+- A32NX_ADIRS_IR_{number}_BODY_ROLL_RATE
+    - Arinc429Word<Degrees per second>
+    - The body roll rate (p) of the aircraft
+
+- A32NX_ADIRS_IR_{number}_BODY_YAW_RATE
+    - Arinc429Word<Degrees per second>
+    - The body yaw rate (r) of the aircraft
+
+- A32NX_ADIRS_IR_{number}_BODY_LONGITUDINAL_ACC
+    - Arinc429Word<g-Number>
+    - The longitudinal (forward/backward) acceleration of the aircraft
+
+- A32NX_ADIRS_IR_{number}_BODY_LATERAL_ACC
+    - Arinc429Word<g-Number>
+    - The lateral (left/right) acceleration of the aircraft
+
+- A32NX_ADIRS_IR_{number}_BODY_NORMAL_ACC
+    - Arinc429Word<g-Number>
+    - The normal acceleration (load factor) of the aircraft
+
+- A32NX_ADIRS_IR_{number}_HEADING_RATE
+    - Arinc429Word<Degrees per second>
+    - The heading rate (ψ^dot) of the aircraft
+
+- A32NX_ADIRS_IR_{number}_PITCH_ATT_RATE
+    - Arinc429Word<Degrees per second>
+    - The pitch rate (θ^dot) of the aircraft
+
+- A32NX_ADIRS_IR_{number}_ROLL_ATT_RATE
+    - Arinc429Word<Degrees per second>
+    - The roll rate (φ^dot) of the aircraft
+
 - A32NX_ADIRS_USES_GPS_AS_PRIMARY
     - Bool
     - Whether or not the GPS is used as the primary means of navigation/position determination.
+
+## Radio Receivers
+
+- A32NX_RADIO_RECEIVER_USAGE_ENABLED
+    - Bool
+    - Whether or not the calculated ILS signals shall be used
+
+- A32NX_RADIO_RECEIVER_LOC_IS_VALID
+    - Bool
+    - Indicates if the localizer signal is valid
+
+- A32NX_RADIO_RECEIVER_LOC_DISTANCE
+    - Number in nautical miles
+    - Indicates the distance from the localizer
+
+- A32NX_RADIO_RECEIVER_LOC_DEVIATION
+    - Number in degrees
+    - If A32NX_RADIO_RECEIVER_USAGE_ENABLED == 0 it contains the deviation from the sim
+    - If A32NX_RADIO_RECEIVER_USAGE_ENABLED == 1 it contains calculated LOC deviation
+
+- A32NX_RADIO_RECEIVER_GS_IS_VALID
+    - Bool
+    - Indicates if the glide slope signal is valid
+
+- A32NX_RADIO_RECEIVER_GS_DEVIATION
+    - Number in degrees
+    - Deviation from glide slope
+    - If A32NX_RADIO_RECEIVER_USAGE_ENABLED == 0 it contains the deviation from the sim
+    - If A32NX_RADIO_RECEIVER_USAGE_ENABLED == 1 it contains calculated LOC deviation
 
 ## Flight Management System
 
@@ -1516,6 +1705,11 @@ In the variables below, {number} should be replaced with one item in the set: { 
   - Bool
   - Indicates whether the FMS should switch to APPROACH phase.
   - **WARNING:** This is temporary and internal. Do not use.
+
+- A32NX_FM_VNAV_DEBUG_POINT
+    - Nautical miles
+    - Indicates the distance from start at which to draw a debug pseudowaypoint on the ND
+    - **WARNING:** This is only used for testing purposes.
 
 ## Autopilot System
 
@@ -1707,6 +1901,11 @@ In the variables below, {number} should be replaced with one item in the set: { 
     - Number (Degrees)
     - Indicates the selected heading on the FCU, instantly updated
     - In case of managed heading mode, the value is -1
+
+- A32NX_AUTOPILOT_H_DOT_RADIO
+    - Number (Feet per minute)
+    - Indicates the current estimated vertical speed relative to the runway
+    - Important: the signal is only usable above the runway and is not to be used elsewhere
 
 - A32NX_FCU_SPD_MANAGED_DASHES
   - Boolean
@@ -2177,7 +2376,7 @@ In the variables below, {number} should be replaced with one item in the set: { 
 - A32NX_OVHD_COND_{id}_SELECTOR_KNOB
     - Percentage
     - Percent rotation of the overhead temperature selectors for each of the cabin zones
-    - To transform the value into degree celsius use this formula: this * 0.12 + 18
+    - To transform the value into degree celsius use this formula: this * 0.04 + 18
     - {id}
         - CKPT
         - FWD
@@ -2379,7 +2578,7 @@ In the variables below, {number} should be replaced with one item in the set: { 
 
 - A32NX_PNEU_PACK_{number}_FLOW_VALVE_FLOW_RATE:
     - Indicates the flow rate through the pack flow valve
-    - Gallon per second
+    - Kilogram per second
     - {number}
         - 1
         - 2
@@ -2396,7 +2595,41 @@ In the variables below, {number} should be replaced with one item in the set: { 
     - Indicates whether the fault light is on for the engine bleed push button
     - Bool
 
-## Traffic Collison Avoidance System
+## Landing Gear (ATA 32)
+
+- A32NX_LGCIU_{number}_{gear}_GEAR_COMPRESSED
+    - Indicates if the shock absorber is compressed (not fully extended)
+    - Bool
+    - {number}
+        - 1
+        - 2
+    - {gear}
+        - NOSE
+        - LEFT
+        - RIGHT
+
+## ATC (ATA 34)
+
+- A32NX_TRANSPONDER_MODE
+    - The transponder mode selector switch position
+    - Enum
+      Mode | Value
+      --- | ---
+      STBY | 0
+      AUTO | 1
+      ON | 2
+
+- A32NX_TRANSPONDER_SYSTEM
+    - The transponder system selector switch position
+    - Enum
+      System | Value
+      --- | ---
+      Transponder 1 | 0
+      Transponder 2 | 1
+
+- A32NX_SWITCH_ATC_ALT
+    - The transponder altitude reporting switch position
+    - Bool
 
 - A32NX_SWITCH_TCAS_Position
   - Enum
@@ -2407,15 +2640,6 @@ In the variables below, {number} should be replaced with one item in the set: { 
       STBY | 0
       TA | 1
       TA/RA | 2
-
-- A32NX_SWITCH_ATC
-  - Enum
-  - Read-Only
-  - Selected active transponder (XPDR1/2)
-      Description | Value
-      --- | ---
-      XPDR1 | 0
-      XPDR2 | 1
 
 - A32NX_SWITCH_TCAS_Traffic_Position
   - Enum
@@ -2474,38 +2698,11 @@ In the variables below, {number} should be replaced with one item in the set: { 
         - 0
         - 1
 
-## Landing Gear (ATA 32)
+## Radio Altimeter (ATA 34)
 
-- A32NX_LGCIU_{number}_{gear}_GEAR_COMPRESSED
-    - Indicates if the shock absorber is compressed (not fully extended)
-    - Bool
+- A32NX_RA_{number}_RADIO_ALTITUDE
+    - `Arinc429Word<Feet>`
+    - The height over ground as measured by the corresponding radio altimeter towards the aft of the aircraft
     - {number}
-        - 1
-        - 2
-    - {gear}
-        - NOSE
-        - LEFT
-        - RIGHT
-
-## ATC (ATA 34)
-
-- A32NX_TRANSPONDER_MODE
-    - The transponder mode selector switch position
-    - Enum
-      Mode | Value
-      --- | ---
-      STBY | 0
-      AUTO | 1
-      ON | 2
-
-- A32NX_TRANSPONDER_SYSTEM
-    - The transponder system selector switch position
-    - Enum
-      System | Value
-      --- | ---
-      Transponder 1 | 0
-      Transponder 2 | 1
-
-- A32NX_TRANSPONDER_ALT_RPTG
-    - The transponder altitude reporting switch position
-    - Bool
+      - 0
+      - 1

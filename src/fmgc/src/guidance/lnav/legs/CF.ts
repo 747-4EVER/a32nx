@@ -4,7 +4,6 @@
 // SPDX-License-Identifier: GPL-3.0
 
 import { Coordinates } from '@fmgc/flightplanning/data/geo';
-import { Guidable } from '@fmgc/guidance/Guidable';
 import { SegmentType } from '@fmgc/flightplanning/FlightPlanSegment';
 import { GuidanceParameters } from '@fmgc/guidance/ControlLaws';
 import { courseToFixDistanceToGo, courseToFixGuidance } from '@fmgc/guidance/lnav/CommonGeometry';
@@ -14,9 +13,8 @@ import { Transition } from '@fmgc/guidance/lnav/Transition';
 import { Geo } from '@fmgc/utils/Geo';
 import { FixedRadiusTransition } from '@fmgc/guidance/lnav/transitions/FixedRadiusTransition';
 import { DmeArcTransition } from '@fmgc/guidance/lnav/transitions/DmeArcTransition';
-import { bearingTo, distanceTo } from 'msfs-geo';
-import { MathUtils } from '@shared/MathUtils';
 import { LegMetadata } from '@fmgc/guidance/lnav/legs/index';
+import { IFLeg } from '@fmgc/guidance/lnav/legs/IF';
 import { PathVector, PathVectorType } from '../PathVector';
 
 export class CFLeg extends XFLeg {
@@ -34,6 +32,10 @@ export class CFLeg extends XFLeg {
     }
 
     getPathStartPoint(): Coordinates | undefined {
+        if (this.inboundGuidable instanceof IFLeg) {
+            return this.inboundGuidable.fix.infos.coordinates;
+        }
+
         if (this.inboundGuidable instanceof Transition && this.inboundGuidable.isComputed) {
             return this.inboundGuidable.getPathEndPoint();
         }
@@ -83,10 +85,13 @@ export class CFLeg extends XFLeg {
         return this.computedPath;
     }
 
-    recomputeWithParameters(isActive: boolean, _tas: Knots, _gs: Knots, ppos: Coordinates, _trueTrack: DegreesTrue, previousGuidable: Guidable, nextGuidable: Guidable) {
-        this.inboundGuidable = previousGuidable;
-        this.outboundGuidable = nextGuidable;
-
+    recomputeWithParameters(
+        _isActive: boolean,
+        _tas: Knots,
+        _gs: Knots,
+        _ppos: Coordinates,
+        _trueTrack: DegreesTrue,
+    ) {
         // Is start point after the fix ?
         if (this.overshot) {
             this.computedPath = [{
@@ -95,44 +100,10 @@ export class CFLeg extends XFLeg {
                 endPoint: this.getPathEndPoint(),
             }];
         } else {
-            const startPoint = Geo.doublePlaceBearingIntercept(
-                this.fix.infos.coordinates,
-                this.getPathStartPoint(),
-                Avionics.Utils.clampAngle(this.course + 180),
-                Avionics.Utils.clampAngle(this.course + 90),
-            );
-
-            const bearingWithTransitions = bearingTo(this.getPathStartPoint(), this.getPathEndPoint());
-            const intersectedEndPoint = Geo.doublePlaceBearingIntercept(
-                this.fix.infos.coordinates,
-                this.getPathStartPoint(),
-                Avionics.Utils.clampAngle(this.course + 90),
-                bearingWithTransitions,
-            );
-
-            let endPoint = this.getPathEndPoint();
-            if (distanceTo(this.fix.infos.coordinates, intersectedEndPoint) > 0.01 && Math.abs(MathUtils.diffAngle(this.course, bearingWithTransitions)) > 1) {
-                const correctedStartPoint = Geo.doublePlaceBearingIntercept(
-                    this.fix.infos.coordinates,
-                    this.getPathStartPoint(),
-                    Avionics.Utils.clampAngle(this.course + 180),
-                    Avionics.Utils.clampAngle(this.course + 90),
-                );
-
-                const correctedEndPoint = Geo.doublePlaceBearingIntercept(
-                    correctedStartPoint,
-                    this.fix.infos.coordinates,
-                    this.course,
-                    Avionics.Utils.clampAngle(this.course + 90),
-                );
-
-                endPoint = correctedEndPoint;
-            }
-
             this.computedPath = [{
                 type: PathVectorType.Line,
-                startPoint,
-                endPoint,
+                startPoint: this.getPathStartPoint(),
+                endPoint: this.getPathEndPoint(),
             }];
         }
 

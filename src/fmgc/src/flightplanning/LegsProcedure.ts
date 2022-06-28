@@ -22,6 +22,8 @@
  * SOFTWARE.
  */
 
+import { HoldData, HoldType } from '@fmgc/flightplanning/data/flightplan';
+import { firstSmallCircleIntersection } from 'msfs-geo';
 import { AltitudeDescriptor, FixTypeFlags, LegType } from '../types/fstypes/FSEnums';
 import { FixNamingScheme } from './FixNamingScheme';
 import { GeoMath } from './GeoMath';
@@ -66,8 +68,9 @@ export class LegsProcedure {
    * @param legs The legs that are part of the procedure.
    * @param startingPoint The starting point for the procedure.
    * @param instrument The instrument that is attached to the flight plan.
+   * @param approachType The approach type if this is an approach procedure
    */
-  constructor(private _legs: RawProcedureLeg[], private _previousFix: WayPoint, private _instrument: BaseInstrument) {
+  constructor(private _legs: RawProcedureLeg[], private _previousFix: WayPoint, private _instrument: BaseInstrument, private approachType?: ApproachType) {
       for (const leg of this._legs) {
           if (this.isIcaoValid(leg.fixIcao)) {
               this._facilitiesToLoad.set(leg.fixIcao, this._instrument.facilityLoader.getFacilityRaw(leg.fixIcao, 2000));
@@ -175,7 +178,13 @@ export class LegsProcedure {
                       break;
                   case LegType.DF:
                   case LegType.TF:
-                      mappedLeg = this.mapExactFix(currentLeg);
+                      // Only map if the fix is itself not a runway fix to avoid double
+                      // adding runway fixes
+                      if (currentLeg.fixIcao === '' || currentLeg.fixIcao[0] !== 'R') {
+                          mappedLeg = this.mapExactFix(currentLeg);
+                      } else {
+                          isLegMappable = false;
+                      }
                       break;
                   case LegType.RF:
                       mappedLeg = this.mapRadiusToFix(currentLeg);
@@ -198,19 +207,26 @@ export class LegsProcedure {
               }
 
               if (mappedLeg !== undefined) {
-                  mappedLeg.legAltitudeDescription = currentLeg.altDesc;
+                  if (this.approachType === ApproachType.APPROACH_TYPE_ILS && (currentLeg.fixTypeFlags & FixTypeFlags.FAF) > 0) {
+                      if (currentLeg.altDesc === AltitudeDescriptor.At) {
+                          mappedLeg.legAltitudeDescription = AltitudeDescriptor.G;
+                      } else {
+                          mappedLeg.legAltitudeDescription = AltitudeDescriptor.H;
+                      }
+                  } else {
+                      mappedLeg.legAltitudeDescription = currentLeg.altDesc;
+                  }
                   mappedLeg.legAltitude1 = currentLeg.altitude1 * 3.28084;
                   mappedLeg.legAltitude2 = currentLeg.altitude2 * 3.28084;
                   mappedLeg.speedConstraint = currentLeg.speedRestriction;
                   mappedLeg.turnDirection = currentLeg.turnDirection;
                   mappedLeg.additionalData.legType = currentLeg.type;
                   mappedLeg.additionalData.overfly = currentLeg.flyOver;
+                  mappedLeg.additionalData.fixTypeFlags = currentLeg.fixTypeFlags;
 
-                  mappedLeg.additionalData.distance = currentLeg.distanceMinutes ? 0 : currentLeg.distance / 1852;
-                  mappedLeg.additionalData.distanceInMinutes = currentLeg.distanceMinutes ? currentLeg.distance : 0;
+                  mappedLeg.additionalData.distance = currentLeg.distanceMinutes ? undefined : currentLeg.distance / 1852;
+                  mappedLeg.additionalData.distanceInMinutes = currentLeg.distanceMinutes ? currentLeg.distance : undefined;
                   mappedLeg.additionalData.course = currentLeg.trueDegrees ? currentLeg.course : A32NX_Util.magneticToTrue(currentLeg.course, Facilities.getMagVar(mappedLeg.infos.coordinates.lat, mappedLeg.infos.coordinates.long));
-                  mappedLeg.additionalData.course = mappedLeg.additionalData.course;
-                  mappedLeg.additionalData.overfly = currentLeg.flyOver;
               }
 
               this._currentIndex++;
@@ -266,18 +282,45 @@ export class LegsProcedure {
   }
 
   /**
-   * Maps a bearing/distance fix in the procedure.
+   * Maps an FC or FD leg in the procedure.
+   * @note FC and FD legs are mapped to CF legs in the real FMS
+   * @todo move the code into the CF leg (maybe static functions fromFc and fromFd to construct the leg)
+   * @todo FD should overfly the termination... needs a messy refactor to do that
    * @param leg The procedure leg to map.
    * @returns The mapped leg.
    */
   public mapBearingAndDistanceFromOrigin(leg: RawProcedureLeg): WayPoint {
-      const origin = this._facilities.get(leg.type === LegType.FD ? leg.originIcao : leg.fixIcao);
-      const originIdent = origin.icao.substring(7, 12).trim();
+    const origin = this._facilities.get(leg.fixIcao);
+    const originIdent = origin.icao.substring(7, 12).trim();
+    const course = leg.trueDegrees ? leg.course : A32NX_Util.magneticToTrue(leg.course, Facilities.getMagVar(origin.lat, origin.lon));
+    // this is the leg length for FC, and the DME distance for FD
+    const refDistance = leg.distance / 1852;
 
-      const course = leg.course + GeoMath.getMagvar(origin.lat, origin.lon);
-      const coordinates = Avionics.Utils.bearingDistanceToCoordinates(course, leg.distance / 1852, origin.lat, origin.lon);
+    let termPoint;
+    let legLength;
+    if (leg.type === LegType.FD) {
+        const recNavaid = this._facilities.get(leg.originIcao);
+        termPoint = firstSmallCircleIntersection(
+            { lat: recNavaid.lat, long: recNavaid.lon },
+            refDistance,
+            { lat: origin.lat, long: origin.lon },
+            course,
+        );
+        legLength = Avionics.Utils.computeGreatCircleDistance(
+            { lat: origin.lat, long: origin.lon },
+            termPoint,
+        );
+    } else { // FC
+        termPoint = Avionics.Utils.bearingDistanceToCoordinates(
+            course,
+            refDistance,
+            origin.lat,
+            origin.lon,
+        );
+        legLength = refDistance;
+    }
 
-      return this.buildWaypoint(`${originIdent.substring(0, 3)}/${Math.trunc(leg.distance / 1852).toString().padStart(2, '0')}`, coordinates);
+    return this.buildWaypoint(`${originIdent.substring(0, 3)}/${Math.round(legLength).toString().padStart(2, '0')}`, termPoint);
   }
 
   /**
@@ -467,9 +510,16 @@ export class LegsProcedure {
       const facility = this._facilities.get(leg.fixIcao);
       const waypoint = RawDataMapper.toWaypoint(facility, this._instrument);
 
-      waypoint.additionalData.distance = leg.distanceMinutes ? 0 : leg.distance / 1852;
-      waypoint.additionalData.distanceInMinutes = leg.distanceMinutes ? leg.distance : 0;
-      waypoint.additionalData.course = leg.trueDegrees ? leg.course : A32NX_Util.magneticToTrue(leg.course, Facilities.getMagVar(facility.lat, facility.lon));
+      const magVar = Facilities.getMagVar(facility.lat, facility.lon);
+
+      (waypoint.additionalData.defaultHold as HoldData) = {
+          inboundMagneticCourse: leg.trueDegrees ? A32NX_Util.trueToMagnetic(leg.course, magVar) : leg.course,
+          turnDirection: leg.turnDirection,
+          distance: leg.distanceMinutes ? undefined : leg.distance / 1852,
+          time: leg.distanceMinutes ? leg.distance : undefined,
+          type: HoldType.Database,
+      };
+      waypoint.additionalData.modifiedHold = {};
 
       return waypoint;
   }

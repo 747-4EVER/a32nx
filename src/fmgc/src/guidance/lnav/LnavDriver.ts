@@ -19,8 +19,7 @@ import { VMLeg } from '@fmgc/guidance/lnav/legs/VM';
 import { XFLeg } from '@fmgc/guidance/lnav/legs/XF';
 import { Coordinates } from '@fmgc/flightplanning/data/geo';
 import { FmgcFlightPhase } from '@shared/flightphase';
-import { GuidanceController } from '../GuidanceController';
-import { GuidanceComponent } from '../GuidanceComponent';
+import { GuidanceController, GuidanceComponent } from '@fmgc/guidance';
 
 /**
  * Represents the current turn state of the LNAV driver
@@ -59,7 +58,7 @@ export class LnavDriver implements GuidanceComponent {
 
     public ppos: LatLongAlt = new LatLongAlt();
 
-    private listener = RegisterViewListener('JS_LISTENER_SIMVARS');
+    private listener = RegisterViewListener('JS_LISTENER_SIMVARS', null, true);
 
     constructor(guidanceController: GuidanceController) {
         this.guidanceController = guidanceController;
@@ -85,7 +84,7 @@ export class LnavDriver implements GuidanceComponent {
         const activeLegIdx = this.guidanceController.activeLegIndex;
 
         if (geometry && geometry.legs.size > 0) {
-            const dtg = geometry.getDistanceToGo(this.ppos);
+            const dtg = geometry.getDistanceToGo(this.guidanceController.activeLegIndex, this.ppos);
 
             const inboundTrans = geometry.transitions.get(activeLegIdx - 1);
             const activeLeg = geometry.legs.get(activeLegIdx);
@@ -127,6 +126,8 @@ export class LnavDriver implements GuidanceComponent {
                 this.guidanceController.activeTransIndex = activeLegIdx - 1;
             } else if (outboundTrans && outboundTrans.isAbeam(this.ppos)) {
                 this.guidanceController.activeTransIndex = activeLegIdx;
+            } else {
+                this.guidanceController.activeTransIndex = -1;
             }
 
             // Pseudo waypoint sequencing
@@ -178,7 +179,7 @@ export class LnavDriver implements GuidanceComponent {
                 }
 
                 // Send bank limit to FG
-                const bankLimit = maxBank(tas, /* FIXME */ false);
+                const bankLimit = params?.phiLimit ?? maxBank(tas, false);
 
                 SimVar.SetSimVarValue('L:A32NX_FG_PHI_LIMIT', 'Degrees', bankLimit);
 
@@ -361,8 +362,7 @@ export class LnavDriver implements GuidanceComponent {
                 withinSequencingArea = Math.abs(params.crossTrackError) < 7 && Math.abs(params.trackAngleError) < 90;
             }
 
-            if (canSequence && withinSequencingArea && geometry.shouldSequenceLeg(activeLegIdx, this.ppos)) {
-                const currentLeg = activeLeg;
+            if ((canSequence && withinSequencingArea && geometry.shouldSequenceLeg(activeLegIdx, this.ppos)) || activeLeg.isNull) {
                 const outboundTransition = geometry.transitions.get(activeLegIdx);
                 const nextLeg = geometry.legs.get(activeLegIdx + 1);
                 const followingLeg = geometry.legs.get(activeLegIdx + 2);
@@ -371,12 +371,15 @@ export class LnavDriver implements GuidanceComponent {
                     // FIXME we should stop relying on discos in the wpt objects, but for now it's fiiiiiine
                     // Hard-coded check for TF leg after the disco for now - only case where we don't wanna
                     // sequence this way is VM
-                    if (currentLeg instanceof XFLeg && currentLeg.fix.endsInDiscontinuity) {
-                        this.sequenceDiscontinuity(currentLeg);
+                    if (activeLeg instanceof XFLeg && activeLeg.fix.endsInDiscontinuity) {
+                        this.sequenceDiscontinuity(activeLeg);
                     } else {
-                        this.sequenceLeg(currentLeg, outboundTransition);
+                        this.sequenceLeg(activeLeg, outboundTransition);
                     }
-                    geometry.onLegSequenced(currentLeg, nextLeg, followingLeg);
+                    geometry.onLegSequenced(activeLeg, nextLeg, followingLeg);
+                } else {
+                    this.sequenceDiscontinuity(activeLeg);
+                    geometry.onLegSequenced(activeLeg, nextLeg, followingLeg);
                 }
             }
         }
@@ -408,11 +411,14 @@ export class LnavDriver implements GuidanceComponent {
     private updateEfisData(activeLeg: Leg, gs: Knots) {
         const termination = activeLeg instanceof XFLeg ? activeLeg.fix.infos.coordinates : activeLeg.getPathEndPoint();
 
-        const efisBearing = Avionics.Utils.computeGreatCircleHeading(this.ppos, termination);
+        const efisBearing = termination ? A32NX_Util.trueToMagnetic(
+            Avionics.Utils.computeGreatCircleHeading(this.ppos, termination),
+            Facilities.getMagVar(this.ppos.lat, this.ppos.long),
+        ) : -1;
 
         // Don't compute distance and ETA for XM legs
-        const efisDistance = activeLeg instanceof VMLeg ? null : Avionics.Utils.computeGreatCircleDistance(this.ppos, termination);
-        const efisEta = activeLeg instanceof VMLeg ? null : LnavDriver.legEta(this.ppos, gs, termination);
+        const efisDistance = activeLeg instanceof VMLeg ? -1 : Avionics.Utils.computeGreatCircleDistance(this.ppos, termination);
+        const efisEta = activeLeg instanceof VMLeg ? -1 : LnavDriver.legEta(this.ppos, gs, termination);
 
         // FIXME should be NCD if no FM position
 
@@ -470,22 +476,29 @@ export class LnavDriver implements GuidanceComponent {
         const lateralModel = SimVar.GetSimVarValue('L:A32NX_FMA_LATERAL_MODE', 'Enum');
         const verticalMode = SimVar.GetSimVarValue('L:A32NX_FMA_VERTICAL_MODE', 'Enum');
 
+        let reverted = false;
+
         if (lateralModel === LateralMode.NAV) {
             // Set HDG (current heading)
             SimVar.SetSimVarValue('H:A320_Neo_FCU_HDG_PULL', 'number', 0);
             SimVar.SetSimVarValue('L:A32NX_AUTOPILOT_HEADING_SELECTED', 'number', Simplane.getHeadingMagnetic());
+            reverted = true;
         }
 
-        // Vertical mode is DES, OP DES, CLB or OP CLB
-        if (verticalMode === VerticalMode.DES || verticalMode === VerticalMode.OP_DES
-            || verticalMode === VerticalMode.CLB || verticalMode === VerticalMode.OP_CLB
-        ) {
-            // Set V/S
+        if (verticalMode === VerticalMode.DES) {
+            // revert to V/S
             SimVar.SetSimVarValue('H:A320_Neo_FCU_VS_PULL', 'number', 0);
+            reverted = true;
+        } else if (verticalMode === VerticalMode.CLB) {
+            // revert to OP CLB
+            SimVar.SetSimVarValue('H:A320_Neo_FCU_ALT_PULL', 'number', 0);
+            reverted = true;
         }
 
-        // Triple click
-        Coherent.call('PLAY_INSTRUMENT_SOUND', '3click').catch(console.error);
+        if (reverted) {
+            // Triple click
+            Coherent.call('PLAY_INSTRUMENT_SOUND', '3click').catch(console.error);
+        }
 
         this.sequenceLeg(_leg, null);
     }

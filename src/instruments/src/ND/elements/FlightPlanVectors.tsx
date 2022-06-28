@@ -3,8 +3,7 @@ import { Layer } from '@instruments/common/utils';
 import { DebugPointColour, PathVector, PathVectorType } from '@fmgc/guidance/lnav/PathVector';
 import { LnavConfig } from '@fmgc/guidance/LnavConfig';
 import { EfisSide, EfisVectorsGroup } from '@shared/NavigationDisplay';
-import { useCoherentEvent } from '@instruments/common/hooks';
-import { distanceTo } from 'msfs-geo';
+import { useFlowSyncEvent } from '@instruments/common/hooks';
 import { MapParameters } from '../utils/MapParameters';
 
 export interface FlightPlanVectorsProps {
@@ -21,34 +20,12 @@ export interface FlightPlanVectorsProps {
  */
 export const FlightPlanVectors: FC<FlightPlanVectorsProps> = memo(({ x, y, mapParams, side, group }) => {
     const [vectors, setVectors] = useState<PathVector[]>([]);
-    const [, setStagingVectors] = useState<PathVector[]>([]);
 
     const lineStyle = vectorsGroupLineStyle(group);
 
-    useCoherentEvent(`A32NX_EFIS_VECTORS_${side}_${EfisVectorsGroup[group]}`, useCallback((newVectors: string, start: number, done: boolean) => {
-        if (newVectors) {
-            const parsed: PathVector[] = JSON.parse(newVectors);
-            setStagingVectors((old) => {
-                const ret = [...old];
-
-                for (let i = start; i < start + newVectors.length; i++) {
-                    ret[i] = parsed[i - start];
-                }
-
-                if (done) {
-                    const trimAfter = start + parsed.length;
-
-                    ret.splice(trimAfter);
-
-                    if (LnavConfig.DEBUG_PATH_DRAWING) {
-                        console.log(`[ND/Vectors/${EfisVectorsGroup[group]}] Trimmed after end of transmit: oldSize=${old.length} newSize=${ret.length} trimAfter=${trimAfter}`);
-                    }
-
-                    setVectors(ret);
-                }
-
-                return ret;
-            });
+    useFlowSyncEvent(`A32NX_EFIS_VECTORS_${side}_${EfisVectorsGroup[group]}`, useCallback((_topic, data) => {
+        if (data) {
+            setVectors(data);
         } else if (LnavConfig.DEBUG_PATH_DRAWING) {
             console.warn(`[ND/Vectors] Received falsy vectors on event '${EfisVectorsGroup[group]}'.`);
         }
@@ -77,7 +54,8 @@ export const FlightPlanVectors: FC<FlightPlanVectorsProps> = memo(({ x, y, mapPa
                     const [ix, iy] = mapParams.coordinatesToXYy(vector.startPoint);
                     const [fx, fy] = mapParams.coordinatesToXYy(vector.endPoint);
 
-                    const radius = distanceTo(vector.centrePoint, vector.endPoint) * mapParams.nmToPx;
+                    // TODO msfs-geo when it has planar calcs
+                    const radius = Avionics.Utils.computeDistance(vector.centrePoint, vector.endPoint) * mapParams.nmToPx;
 
                     return (
                         <path

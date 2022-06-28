@@ -52,7 +52,7 @@ class CDUAocRequestsWeather {
             if (mcdu.page.Current === mcdu.page.AOCRequestWeather) {
                 mcdu.setTemplate([
                     ["AOC WEATHER REQUEST"],
-                    [`WX TYPE`, "AIRPORTS"],
+                    ["\xa0WX TYPE", "AIRPORTS\xa0"],
                     [`↓${reqTypes[data.requestId]}[color]cyan`, airports[0]],
                     [""],
                     ["", airports[1]],
@@ -62,8 +62,8 @@ class CDUAocRequestsWeather {
                     ["", airports[3]],
                     [""],
                     [""],
-                    ["RETURN TO", `${data.sendStatus}\xa0`],
-                    ["<AOC MENU", sendMessage]
+                    ["AOC MENU", `${data.sendStatus}\xa0`],
+                    ["<RETURN", sendMessage]
                 ]);
             }
         };
@@ -113,9 +113,9 @@ class CDUAocRequestsWeather {
                 updateView();
             }, 1000);
 
-            mcdu.atsuManager.aoc.receiveWeather(data.requestId === 0, icaos).then((retval) => {
+            mcdu.atsu.aoc.receiveWeather(data.requestId === 0, icaos).then((retval) => {
                 if (retval[0] === Atsu.AtsuStatusCodes.Ok) {
-                    mcdu.atsuManager.registerMessage(retval[1]);
+                    mcdu.atsu.registerMessage(retval[1]);
                     data.sendStatus = "";
 
                     if (mcdu.page.Current === mcdu.page.AOCRequestWeather) {

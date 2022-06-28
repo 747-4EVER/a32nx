@@ -1,3 +1,8 @@
+// Copyright (c) 2021-2022 FlyByWire Simulations
+// Copyright (c) 2021-2022 Synaptic Simulations
+//
+// SPDX-License-Identifier: GPL-3.0
+
 /**
  * Functions for figuring out an appropriate course change for leg captures
  */
@@ -63,6 +68,6 @@ export class CourseChange {
         turnCenterDistance: NauticalMiles,
         trackChange: Degrees,
     ): Degrees {
-        return turnDirection * (Math.abs(trackChange) + 45);
+        return trackChange + (turnDirection > 0 ? 45 : -45);
     }
 }

@@ -1,7 +1,6 @@
 import { AtsuStatusCodes } from './AtsuStatusCodes';
-import { AtsuManager } from './AtsuManager';
+import { Atsu } from './ATSU';
 import { FreetextMessage } from './messages/FreetextMessage';
-import { PdcMessage } from './messages/PdcMessage';
 import { AtsuMessage, AtsuMessageComStatus, AtsuMessageDirection, AtsuMessageSerializationFormat, AtsuMessageNetwork, AtsuMessageType } from './messages/AtsuMessage';
 import { AtsuTimestamp } from './messages/AtsuTimestamp';
 import { CpdlcMessage, CpdlcMessageResponse } from './messages/CpdlcMessage';
@@ -9,8 +8,10 @@ import { WeatherMessage } from './messages/WeatherMessage';
 import { MetarMessage } from './messages/MetarMessage';
 import { TafMessage } from './messages/TafMessage';
 import { AtisMessage, AtisType } from './messages/AtisMessage';
-import { AocSystem } from './AocSystem';
-import { AtcSystem } from './AtcSystem';
+import { Aoc } from './AOC';
+import { Atc } from './ATC';
+import { DclMessage } from './messages/DclMessage';
+import { OclMessage } from './messages/OclMessage';
 
 export {
     AtsuStatusCodes,
@@ -20,17 +21,18 @@ export {
     AtsuMessageNetwork,
     AtsuMessageSerializationFormat,
     AtsuMessageType,
-    AtsuManager,
+    Atsu,
     AtsuTimestamp,
     CpdlcMessage,
     CpdlcMessageResponse,
     FreetextMessage,
-    PdcMessage,
     WeatherMessage,
     MetarMessage,
     TafMessage,
     AtisMessage,
     AtisType,
-    AocSystem,
-    AtcSystem,
+    Aoc,
+    Atc,
+    DclMessage,
+    OclMessage,
 };

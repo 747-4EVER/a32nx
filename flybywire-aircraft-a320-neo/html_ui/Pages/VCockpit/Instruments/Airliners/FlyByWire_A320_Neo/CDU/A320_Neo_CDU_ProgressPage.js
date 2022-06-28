@@ -12,6 +12,7 @@ class CDUProgressPage {
         const adirsUsesGpsAsPrimary = SimVar.GetSimVarValue("L:A32NX_ADIRS_USES_GPS_AS_PRIMARY", "Bool");
         const gpsPrimaryStatus = adirsUsesGpsAsPrimary ? "{green}GPS PRIMARY{end}" : "";
         let flCrz = "-----";
+        let vDevCell = "";
         switch (mcdu.flightPhaseManager.phase) {
             case FmgcFlightPhases.PREFLIGHT:
             case FmgcFlightPhases.TAKEOFF: {
@@ -33,6 +34,20 @@ class CDUProgressPage {
             case FmgcFlightPhases.CRUISE: {
                 flCrz = "FL" + mcdu.cruiseFlightLevel.toFixed(0).padStart(3, "0") + "[color]cyan";
                 break;
+            }
+            case FmgcFlightPhases.DESCENT: {
+                const vDev = mcdu.guidanceController.vnavDriver.getLinearDeviation();
+                let vDevFormattedNumber = "{small}-----{end}";
+
+                if (vDev && isFinite(vDev)) {
+                    const paddedVdev = (10 * Math.round(vDev / 10)).toFixed(0).padStart(4, "\xa0");
+                    const vDevSign = vDev > 0 ? "+" : " ";
+                    const extraSpace = paddedVdev.length > 4 ? "" : "\xa0";
+
+                    vDevFormattedNumber = "{green}" + extraSpace + vDevSign + paddedVdev + "{end}";
+                }
+
+                vDevCell = "{small}VDEV={end}" + vDevFormattedNumber + "{small}FT{end}";
             }
         }
         let flightPhase;
@@ -106,7 +121,7 @@ class CDUProgressPage {
             ["\xa0" + "CRZ\xa0", "OPT\xa0\xa0\xa0\xa0REC MAX"],
             [flCrz, flOpt + "\xa0\xa0\xa0\xa0" + "{magenta}FL" + flMax.toString() + "\xa0{end}"],
             [""],
-            ["<REPORT", ""],
+            ["<REPORT", vDevCell],
             [adirsUsesGpsAsPrimary ? "" : "\xa0POSITION UPDATE AT"],
             [adirsUsesGpsAsPrimary ? "" : "{small}*{end}[\xa0\xa0\xa0\xa0][color]cyan"],
             ["\xa0\xa0BRG / DIST"],
@@ -116,12 +131,16 @@ class CDUProgressPage {
             ["REQUIRED", "ESTIMATED", "ACCUR{sp}"],
             ["{small}3.4NM{end}[color]cyan", "{small}0.07NM{end}[color]green", "HIGH[color]green"]
         ]);
+
+        // regular update due to showing dynamic data on this page
         mcdu.page.SelfPtr = setTimeout(() => {
             if (mcdu.page.Current === mcdu.page.ProgressPage) {
                 CDUProgressPage.ShowPage(mcdu);
             }
-        }, mcdu.PageTimeout.Prog);
+        }, mcdu.PageTimeout.Default);
+
     }
+
     static ShowReportPage(mcdu) {
         mcdu.clearDisplay();
         mcdu.page.Current = mcdu.page.ProgressPageReport;
@@ -194,6 +213,7 @@ class CDUProgressPage {
             [destCell, "", destUTCCell + " " + destDistCell]
         ]);
     }
+
     static ShowPredictiveGPSPage(mcdu, overrideDestETA = "") {
         mcdu.clearDisplay();
         mcdu.page.Current = mcdu.page.ProgressPagePredictiveGPS;

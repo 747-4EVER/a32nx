@@ -1,27 +1,39 @@
 class CDUAtcConnectionStatus {
     static ShowPage(mcdu, store = { "disconnectAvail": false }) {
         mcdu.clearDisplay();
+        mcdu.page.Current = mcdu.page.ATCConnectionStatus;
 
-        let currentStation = "____[color]amber";
+        function updateView() {
+            if (mcdu.page.Current === mcdu.page.ATCConnectionStatus) {
+                CDUAtcConnectionStatus.ShowPage(mcdu);
+            }
+        }
+
+        mcdu.refreshPageCallback = () => {
+            updateView();
+        };
+        SimVar.SetSimVarValue("L:FMC_UPDATE_CURRENT_PAGE", "number", 1);
+
+        let currentStation = "-----------[color]white";
         let atcDisconnect = "DISCONNECT\xa0[color]cyan";
-        if (mcdu.atsuManager.atc.currentStation() !== '') {
-            currentStation = `${mcdu.atsuManager.atc.currentStation()}[color]green`;
+        if (mcdu.atsu.atc.currentStation() !== "") {
+            currentStation = `${mcdu.atsu.atc.currentStation()}[color]green`;
             atcDisconnect = "DISCONNECT*[color]cyan";
             store["disconnectAvail"] = true;
         } else {
             store["disconnectAvail"] = false;
         }
 
-        let nextStation = "----";
-        if (mcdu.atsuManager.atc.nextStation() !== '') {
-            nextStation = `${mcdu.atsuManager.atc.nextStation()}[color]green`;
+        let nextStation = "-----------";
+        if (mcdu.atsu.atc.nextStation() !== "") {
+            nextStation = `${mcdu.atsu.atc.nextStation()}[color]green`;
         }
 
         mcdu.setTemplate([
             ["CONNECTION STATUS"],
-            ["ACTIVE ATC"],
+            ["\xa0ACTIVE ATC"],
             [currentStation],
-            ["NEXT ATC", "ALL ATC\xa0[color]cyan"],
+            ["\xa0NEXT ATC", "ALL ATC\xa0[color]cyan"],
             [nextStation, atcDisconnect],
             [""],
             [""],
@@ -48,7 +60,7 @@ class CDUAtcConnectionStatus {
                 mcdu.addNewMessage(NXFictionalMessages.noAtc);
             } else {
                 store["disconnectAvail"] = false;
-                mcdu.atsuManager.atc.logoff().then((code) => {
+                mcdu.atsu.atc.logoff().then((code) => {
                     if (code !== Atsu.AtsuStatusCodes.Ok) {
                         store["disconnectAvail"] = true;
                         mcdu.addNewAtsuMessage(code);

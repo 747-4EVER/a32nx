@@ -2,8 +2,6 @@ function translateAtsuMessageType(type) {
     switch (type) {
         case Atsu.AtsuMessageType.Freetext:
             return "FREETEXT";
-        case Atsu.AtsuMessageType.PDC:
-            return "PDC";
         case Atsu.AtsuMessageType.METAR:
             return "METAR";
         case Atsu.AtsuMessageType.TAF:
@@ -65,8 +63,11 @@ const getSimBriefOfp = (mcdu, updateView, callback = () => {}) => {
             mcdu.simbrief["blockFuel"] = mcdu.simbrief["units"] === 'kgs' ? data.fuel.plan_ramp : lbsToKg(data.fuel.plan_ramp);
             mcdu.simbrief["payload"] = mcdu.simbrief["units"] === 'kgs' ? data.weights.payload : lbsToKg(data.weights.payload);
             mcdu.simbrief["estZfw"] = mcdu.simbrief["units"] === 'kgs' ? data.weights.est_zfw : lbsToKg(data.weights.est_zfw);
-            mcdu.simbrief["paxCount"] = data.weights.pax_count;
+            mcdu.simbrief["paxCount"] = data.weights.pax_count_actual;
+            mcdu.simbrief["bagCount"] = data.weights.bag_count_actual;
             mcdu.simbrief["paxWeight"] = mcdu.simbrief["units"] === 'kgs' ? data.weights.pax_weight : lbsToKg(data.weights.pax_weight);
+            mcdu.simbrief["bagWeight"] = mcdu.simbrief["units"] === 'kgs' ? data.weights.bag_weight : lbsToKg(data.weights.bag_weight);
+            mcdu.simbrief["freight"] = mcdu.simbrief["units"] === 'kgs' ? data.weights.freight_added : lbsToKg(data.weights.freight_added);
             mcdu.simbrief["cargo"] = mcdu.simbrief["units"] === 'kgs' ? data.weights.cargo : lbsToKg(data.weights.cargo);
             mcdu.simbrief["costIndex"] = data.general.costindex;
             mcdu.simbrief["navlog"] = data.navlog.fix;
@@ -86,6 +87,8 @@ const getSimBriefOfp = (mcdu, updateView, callback = () => {}) => {
             mcdu.simbrief["sendStatus"] = "DONE";
 
             callback();
+
+            updateView();
 
             return mcdu.simbrief;
         })
@@ -171,8 +174,8 @@ const addWaypointAsync = (fix, mcdu, routeIdent, via) => {
     const wpIndex = mcdu.flightPlanManager.getWaypointsCount() - 1;
     if (via) {
         return new Promise((res, rej) => {
-            mcdu.insertWaypointsAlongAirway(routeIdent, wpIndex, via, (result) => {
-                if (result) {
+            mcdu.insertWaypointsAlongAirway(routeIdent, wpIndex, via).then((result) => {
+                if (result >= 0) {
                     console.log("Inserted waypoint: " + routeIdent + " via " + via);
                     res(true);
                 } else {

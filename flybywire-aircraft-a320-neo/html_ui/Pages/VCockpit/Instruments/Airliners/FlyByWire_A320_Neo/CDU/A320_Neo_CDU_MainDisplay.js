@@ -1,6 +1,11 @@
 class A320_Neo_CDU_MainDisplay extends FMCMainDisplay {
     constructor() {
         super(...arguments);
+
+        this.minPageUpdateThrottler = new UpdateThrottler(100);
+        this.mcduServerConnectUpdateThrottler = new UpdateThrottler(5000);
+        this.powerCheckUpdateThrottler = new UpdateThrottler(500);
+
         this._registered = false;
         this._title = undefined;
         this._titleLeft = '';
@@ -22,9 +27,13 @@ class A320_Neo_CDU_MainDisplay extends FMCMainDisplay {
         this.allSelected = false;
         this.updateRequest = false;
         this.initB = false;
+        this.lastPowerState = 0;
         this.PageTimeout = {
-            Prog: 2000,
-            Dyn: 1500
+            Fast: 500,
+            Medium: 1000,
+            Dyn: 1500,
+            Default: 2000,
+            Slow: 3000,
         };
         this.fmgcMesssagesListener = RegisterViewListener('JS_LISTENER_SIMVARS', null, true);
         this.setupFmgcTriggers();
@@ -89,18 +98,37 @@ class A320_Neo_CDU_MainDisplay extends FMCMainDisplay {
             ATCDepartReq: 55,
             ATCOceanicReq: 56,
             ATCAtis: 57,
-            ATCMessages: 58,
-            ATCReports: 59,
-            ATCPositionReport: 60,
-            ATCMessageModify: 61,
-            ATCConnection: 62,
-            ATCNotification: 63,
-            ATCConnectionStatus: 64,
-            ClimbWind: 65,
-            CruiseWind: 66,
-            DescentWind: 67,
-            FixInfoPage: 68,
+            ATCAtisAutoUpdate: 58,
+            ATCAtisView: 59,
+            ATCMessages: 60,
+            ATCReports: 61,
+            ATCPositionReport: 62,
+            ATCMessageModify: 63,
+            ATCConnection: 64,
+            ATCNotification: 65,
+            ATCConnectionStatus: 66,
+            ATSUMenu: 67,
+            ATSUDatalinkStatus: 68,
+            ClimbWind: 69,
+            CruiseWind: 70,
+            DescentWind: 71,
+            FixInfoPage: 72,
+            AOCRcvdMsgs: 73,
+            AOCSentMsgs: 74,
+            AOCFreeText: 75,
         };
+
+        // Handling of MCDU Sever connection attempts
+        this.socket = undefined;
+        this.socketConnectionAttempts = 0;
+        this.maxConnectionAttempts = 60;
+        this.mcduServerConnect = NXDataStore.get("CONFIG_EXTERNAL_MCDU_SERVER_ENABLED", 'AUTO ON');
+        if (this.mcduServerConnect !== 'PERM OFF') {
+            NXDataStore.set("CONFIG_EXTERNAL_MCDU_SERVER_ENABLED", 'AUTO ON');
+            this.mcduServerConnect = 'AUTO ON';
+        } else {
+            console.log("MCDU server connection attempts permanently deactivated.");
+        }
     }
 
     setupFmgcTriggers() {
@@ -145,8 +173,6 @@ class A320_Neo_CDU_MainDisplay extends FMCMainDisplay {
         } catch (e) {
             console.error(e);
         }
-
-        this.minPageUpdateThrottler = new UpdateThrottler(100);
 
         this.generateHTMLLayout(this.getChildById("Mainframe") || this);
         this.initKeyboardScratchpad();
@@ -222,7 +248,7 @@ class A320_Neo_CDU_MainDisplay extends FMCMainDisplay {
             CDUNavRadioPage.ShowPage(this);
         };
         this.onFuel = () => {
-            CDUFuelPredPage.ShowPage(this);
+            this.goToFuelPredPage();
         };
         this.onAtc = () => {
             CDUAtcMenu.ShowPage1(this);
@@ -237,6 +263,10 @@ class A320_Neo_CDU_MainDisplay extends FMCMainDisplay {
         };
 
         CDUMenuPage.ShowPage(this);
+
+        this.onAirport = () => {
+            this.addNewMessage(NXFictionalMessages.notYetImplemented);
+        };
 
         // If the consent is not set, show telex page
         const onlineFeaturesStatus = NXDataStore.get("CONFIG_ONLINE_FEATURES_STATUS", "UNKNOWN");
@@ -256,15 +286,6 @@ class A320_Neo_CDU_MainDisplay extends FMCMainDisplay {
         NXDataStore.subscribe('*', () => {
             this.requestUpdate();
         });
-
-        setInterval(() => {
-            if (!this.socket || this.socket.readyState !== 1) {
-                this.connectWebsocket(NXDataStore.get("CONFIG_EXTERNAL_MCDU_PORT", "8380"));
-            }
-        }, 5000);
-        setInterval(() => {
-            this.sendUpdate();
-        }, 500);
     }
 
     requestUpdate() {
@@ -274,6 +295,7 @@ class A320_Neo_CDU_MainDisplay extends FMCMainDisplay {
     onUpdate(_deltaTime) {
         super.onUpdate(_deltaTime);
 
+        // every 100ms
         if (this.minPageUpdateThrottler.canUpdate(_deltaTime) !== -1 && this.updateRequest) {
             this.updateRequest = false;
             if (this.pageRedrawCallback) {
@@ -281,19 +303,58 @@ class A320_Neo_CDU_MainDisplay extends FMCMainDisplay {
             }
         }
 
+        // The MCDU is a client to the MCDU Server and tries to connect in regular intervals.
+        // Due to an issue with the sim's Coherent engine we need to avoid trying
+        // to connect the websocket continuously. The below solution based on an EFB setting
+        // and a maximal number of attempts should mitigate the issue until
+        // Asobo has fixed the core issue.
+        if (this.mcduServerConnectUpdateThrottler.canUpdate(_deltaTime) !== -1
+            && this.getGameState() === GameState.ingame) {
+
+            // Try to connect websocket if enabled in EFB and no connection established
+            this.mcduServerConnect = NXDataStore.get("CONFIG_EXTERNAL_MCDU_SERVER_ENABLED", 'AUTO ON');
+            if (this.mcduServerConnect === 'AUTO ON' && (!this.socket || this.socket.readyState !== 1)) {
+                // We try to connect for a fixed amount of attempts, then we deactivate the connection setting
+                if (this.socketConnectionAttempts++ >= this.maxConnectionAttempts) {
+                    console.log("Maximum number of connection attempts to MCDU Server exceeded. No more attempts.");
+                    NXDataStore.set("CONFIG_EXTERNAL_MCDU_SERVER_ENABLED", 'AUTO OFF');
+                    this.socketConnectionAttempts = 0;
+                } else {
+                    console.log(`Attempting MCDU Server connection ${this.socketConnectionAttempts} of ${this.maxConnectionAttempts} attempts.`);
+                    this.connectWebsocket(NXDataStore.get("CONFIG_EXTERNAL_MCDU_PORT", "8380"));
+                }
+            } else if (this.mcduServerConnect !== 'AUTO ON') {
+                if (this.socketConnectionAttempts > 0) {
+                    console.log("MCDU server connection attempts deactivated. No more attempts.");
+                    this.socketConnectionAttempts = 0;
+                }
+                if (this.socket) {
+                    // If there is a connection established but the EFB setting has been changed
+                    // then close connection
+                    this.socket.close();
+                    this.socket = undefined;
+                }
+            }
+        }
+
+        // There is no (known) event when power is turned on or off (e.g. Ext Pwr) and remote clients
+        // would not be updated (cleared or updated). Therefore, monitoring power is necessary.
+        // every 500ms
+        if (this.powerCheckUpdateThrottler.canUpdate(_deltaTime) !== -1
+            && this.socket && this.socket.readyState) {
+
+            const isPoweredL = SimVar.GetSimVarValue("L:A32NX_ELEC_AC_ESS_SHED_BUS_IS_POWERED", "Number");
+            if (this.lastPowerState !== isPoweredL) {
+                this.lastPowerState = isPoweredL;
+                this.sendUpdate();
+            }
+        }
+
         // TODO these other mechanisms are replaced in the MCDU split PR
         if (this.pageUpdate) {
             this.pageUpdate();
         }
-        if (SimVar.GetSimVarValue("L:FMC_UPDATE_CURRENT_PAGE", "number") === 1) {
-            SimVar.SetSimVarValue("L:FMC_UPDATE_CURRENT_PAGE", "number", 0).then();
-            if (this.refreshPageCallback) {
-                this.refreshPageCallback();
-            }
-        }
-
         this.checkAocTimes();
-
         this.updateMCDU();
     }
 
@@ -817,7 +878,8 @@ class A320_Neo_CDU_MainDisplay extends FMCMainDisplay {
             }
         });
         window.document.addEventListener('keydown', (e) => {
-            if (this.inFocus) {
+            // MCDU should not accept input while unpowered
+            if (this.inFocus && SimVar.GetSimVarValue("L:A32NX_ELEC_AC_ESS_SHED_BUS_IS_POWERED", "Number")) {
                 let keycode = e.keyCode;
                 this.lastInput = new Date();
                 if (keycode >= KeyCode.KEY_NUMPAD0 && keycode <= KeyCode.KEY_NUMPAD9) {
@@ -981,6 +1043,12 @@ class A320_Neo_CDU_MainDisplay extends FMCMainDisplay {
             case Atsu.AtsuStatusCodes.SystemBusy:
                 this.addNewMessage(NXSystemMessages.systemBusy);
                 break;
+            case Atsu.AtsuStatusCodes.NewAtisReceived:
+                this.addNewMessage(NXSystemMessages.newAtisReceived);
+                break;
+            case Atsu.AtsuStatusCodes.NoAtisReceived:
+                this.addNewMessage(NXSystemMessages.noAtisReceived);
+                break;
             default:
                 break;
         }
@@ -1071,6 +1139,11 @@ class A320_Neo_CDU_MainDisplay extends FMCMainDisplay {
 
     onEvent(_event) {
         super.onEvent(_event);
+
+        // MCDU should not accept input while unpowered
+        if (!SimVar.GetSimVarValue("L:A32NX_ELEC_AC_ESS_SHED_BUS_IS_POWERED", "Number")) {
+            return;
+        }
 
         if (_event.indexOf("1_BTN_") !== -1 || _event.indexOf("2_BTN_") !== -1 || _event.indexOf("BTN_") !== -1) {
             const input = _event.replace("1_BTN_", "").replace("2_BTN_", "").replace("BTN_", "");
@@ -1392,23 +1465,48 @@ class A320_Neo_CDU_MainDisplay extends FMCMainDisplay {
      * Attempts to connect to a local websocket server
      */
     connectWebsocket(port) {
+
+        const url = `ws://127.0.0.1:${port}`;
+
         if (this.socket) {
+            // Trying to close a socket in readState == 0 leads to
+            // an error message ('WebSocket is closed before the connection is established')
+            // in the console.
+            // Not closing sockets in readyState 0 leads to an accumulation of
+            // unclosed sockets
             this.socket.close();
             this.socket = undefined;
         }
 
-        if (this.socketTimeout) {
-            clearTimeout(this.socketTimeout);
-        }
+        this.socket = new WebSocket(url);
 
-        this.socket = new WebSocket(`ws://127.0.0.1:${port}`);
+        this.socket.onerror = () => {
+            // Check this to only log possible errors once connected.
+            // Otherwise, it just spams the log when attempting to connect.
+            if (this.socketConnectionAttempts > 0) {
+                return;
+            }
+            console.log(`WebSocket connection error. Maybe MCDU Server disconnected? (${url})`);
+        };
+
+        this.socket.onclose = () => {
+            // Check this to only log possible errors once connected.
+            // Otherwise, it just spams the log when attempting to connect.
+            if (this.socketConnectionAttempts > 0) {
+                return;
+            }
+            console.log(`Websocket connection to MCDU Server closed. (${url})`);
+        };
+
         this.socket.onopen = () => {
+            console.log(`Websocket connection to MCDU Server established. (${url})`);
             (new NXNotif).showNotification({title: "MCDU CONNECTED", message: "Successfully connected to MCDU server.", timeout: 5000});
             this.sendToSocket("mcduConnected");
             this.sendUpdate();
+            this.socketConnectionAttempts = 0;
         };
 
-        this.socket.addEventListener('message', (event) => {
+        this.socket.onmessage = (event) => {
             const message = event.data;
             if (message.startsWith("event:")) {
                 SimVar.SetSimVarValue(`H:A320_Neo_CDU_1_BTN_${message.substring(6)}`, "number", 0);
@@ -1417,7 +1515,7 @@ class A320_Neo_CDU_MainDisplay extends FMCMainDisplay {
             if (message === "requestUpdate") {
                 this.sendUpdate();
             }
-        });
+        };
     }
 
     /**
@@ -1491,5 +1589,13 @@ class A320_Neo_CDU_MainDisplay extends FMCMainDisplay {
         this.sendToSocket(`update:${JSON.stringify(content)}`);
     }
     /* END OF WEBSOCKET */
+
+    goToFuelPredPage() {
+        if (this.isAnEngineOn()) {
+            CDUFuelPredPage.ShowPage(this);
+        } else {
+            CDUInitPage.ShowPage2(this);
+        }
+    }
 }
 registerInstrument("a320-neo-cdu-main-display", A320_Neo_CDU_MainDisplay);
